@@ -1,0 +1,6 @@
+globals:
+
+accounts:
+  - name: sandbox
+    account: "621648307412"
+    region: us-east-1
