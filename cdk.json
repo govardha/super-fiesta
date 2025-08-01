@@ -21,6 +21,9 @@
     "deployment_account_id": "766789219588",
     "deployment_account_region": "us-east-1",
     "sandbox_account_id": "621648307412",
+    "default_account": "621648307412",
+    "default_region": "us-east-1",
+    "default_environment": "sandbox",
     "@aws-cdk/core:target-partitions": [
       "aws",
       "aws-cn"

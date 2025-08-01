@@ -7,28 +7,34 @@ from aws_cdk import (
     RemovalPolicy,
 )
 from constructs import Construct
+from configs.config import AppConfigs
+from configs.models import InfrastructureSpec
 
 
 class VpcInterfaceEndpointsStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, account_name: str = "sandbox", **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+        
+        # Load configuration from infrastructure.yaml
+        self.config_loader = AppConfigs()
+        self.infra_config: InfrastructureSpec = self.config_loader.get_infrastructure_info(account_name)
 
-        # Create VPC with private subnets
+        # Create VPC with configuration from infrastructure.yaml
         self.vpc = ec2.Vpc(
             self,
             "VpcEndpointsDemo",
-            ip_addresses=ec2.IpAddresses.cidr("10.0.0.0/16"),
-            max_azs=2,
-            nat_gateways=0,  # No NAT gateways to force traffic through endpoints
+            ip_addresses=ec2.IpAddresses.cidr(self.infra_config.vpc.cidr),
+            max_azs=self.infra_config.vpc.max_azs,
+            nat_gateways=self.infra_config.vpc.nat_gateways,  # No NAT gateways to force traffic through endpoints
             subnet_configuration=[
                 ec2.SubnetConfiguration(
                     name="Private",
                     subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
-                    cidr_mask=24,
+                    cidr_mask=self.infra_config.vpc.subnet_mask,
                 )
             ],
-            enable_dns_hostnames=True,
-            enable_dns_support=True,
+            enable_dns_hostnames=self.infra_config.vpc.enable_dns_hostnames,
+            enable_dns_support=self.infra_config.vpc.enable_dns_support,
         )
 
         # Security Group for VPC Endpoints
@@ -56,13 +62,33 @@ class VpcInterfaceEndpointsStack(Stack):
             allow_all_outbound=True,
         )
 
-        # CloudWatch Logs Group for VPC Flow Logs
+        # CloudWatch Logs Group for VPC Flow Logs (from config)
+        retention_mapping = {
+            1: logs.RetentionDays.ONE_DAY,
+            3: logs.RetentionDays.THREE_DAYS,
+            5: logs.RetentionDays.FIVE_DAYS,
+            7: logs.RetentionDays.ONE_WEEK,
+            14: logs.RetentionDays.TWO_WEEKS,
+            30: logs.RetentionDays.ONE_MONTH,
+            60: logs.RetentionDays.TWO_MONTHS,
+            90: logs.RetentionDays.THREE_MONTHS,
+            120: logs.RetentionDays.FOUR_MONTHS,
+            150: logs.RetentionDays.FIVE_MONTHS,
+            180: logs.RetentionDays.SIX_MONTHS,
+            365: logs.RetentionDays.ONE_YEAR,
+        }
+        
+        retention_days = retention_mapping.get(
+            self.infra_config.logging.retention_days, 
+            logs.RetentionDays.ONE_WEEK
+        )
+        
         self.flow_logs_group = logs.LogGroup(
             self,
             "VpcFlowLogsGroup",
-            log_group_name="/aws/vpc/flowlogs",
+            log_group_name=self.infra_config.logging.flow_logs_group_name,
             removal_policy=RemovalPolicy.DESTROY,
-            retention=logs.RetentionDays.ONE_WEEK,
+            retention=retention_days,
         )
 
         # VPC Flow Logs Role
@@ -113,83 +139,49 @@ class VpcInterfaceEndpointsStack(Stack):
         self.create_outputs()
 
     def create_vpc_endpoints(self):
-        """Create VPC Interface Endpoints for AWS services"""
+        """Create VPC Interface Endpoints for AWS services from configuration"""
         
-        # SSM VPC Endpoint
-        self.ssm_endpoint = ec2.InterfaceVpcEndpoint(
-            self,
-            "SsmEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.SSM,
-            security_groups=[self.endpoint_sg],
-            private_dns_enabled=True,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-            policy_document=iam.PolicyDocument(
-                statements=[
+        # Create endpoints based on configuration
+        service_mapping = {
+            "SSM": ec2.InterfaceVpcEndpointAwsService.SSM,
+            "SSM_MESSAGES": ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
+            "EC2_MESSAGES": ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
+            "EC2": ec2.InterfaceVpcEndpointAwsService.EC2,
+            "STS": ec2.InterfaceVpcEndpointAwsService.STS,
+            "CLOUDWATCH_LOGS": ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+        }
+        
+        self.endpoints = {}
+        
+        for endpoint_service in self.infra_config.endpoints.services:
+            service_name = endpoint_service.service
+            endpoint_name = endpoint_service.name
+            
+            if service_name not in service_mapping:
+                continue
+                
+            endpoint = ec2.InterfaceVpcEndpoint(
+                self,
+                f"{endpoint_name.title()}Endpoint",
+                vpc=self.vpc,
+                service=service_mapping[service_name],
+                security_groups=[self.endpoint_sg],
+                private_dns_enabled=True,
+                subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            )
+            
+            # Add policy to SSM endpoint after creation
+            if service_name == "SSM":
+                endpoint.add_to_policy(
                     iam.PolicyStatement(
                         effect=iam.Effect.ALLOW,
                         principals=[iam.AnyPrincipal()],
                         actions=["ssm:*"],
                         resources=["*"],
                     )
-                ]
-            ),
-        )
-
-        # SSM Messages VPC Endpoint
-        self.ssm_messages_endpoint = ec2.InterfaceVpcEndpoint(
-            self,
-            "SsmMessagesEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
-            security_groups=[self.endpoint_sg],
-            private_dns_enabled=True,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-        )
-
-        # EC2 Messages VPC Endpoint
-        self.ec2_messages_endpoint = ec2.InterfaceVpcEndpoint(
-            self,
-            "Ec2MessagesEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
-            security_groups=[self.endpoint_sg],
-            private_dns_enabled=True,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-        )
-
-        # EC2 VPC Endpoint
-        self.ec2_endpoint = ec2.InterfaceVpcEndpoint(
-            self,
-            "Ec2Endpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.EC2,
-            security_groups=[self.endpoint_sg],
-            private_dns_enabled=True,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-        )
-
-        # STS VPC Endpoint
-        self.sts_endpoint = ec2.InterfaceVpcEndpoint(
-            self,
-            "StsEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.STS,
-            security_groups=[self.endpoint_sg],
-            private_dns_enabled=True,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-        )
-
-        # CloudWatch Logs VPC Endpoint (for additional testing)
-        self.logs_endpoint = ec2.InterfaceVpcEndpoint(
-            self,
-            "LogsEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-            security_groups=[self.endpoint_sg],
-            private_dns_enabled=True,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-        )
+                )
+            
+            self.endpoints[endpoint_name] = endpoint
 
     def create_ec2_role(self):
         """Create IAM role for EC2 instances with necessary permissions"""
@@ -230,7 +222,7 @@ class VpcInterfaceEndpointsStack(Stack):
         )
 
     def create_test_instance(self):
-        """Create EC2 instance for testing VPC endpoints"""
+        """Create EC2 instance for testing VPC endpoints using configuration"""
         
         # User data script for testing VPC endpoints
         user_data_script = ec2.UserData.for_linux()
@@ -248,23 +240,23 @@ class VpcInterfaceEndpointsStack(Stack):
             "echo '=== VPC Endpoints DNS Resolution Test ==='",
             "echo",
             "echo 'Testing SSM endpoint:'",
-            "dig ssm.us-east-1.amazonaws.com",
+            f"dig ssm.{self.infra_config.region}.amazonaws.com",
             "echo",
             "echo 'Testing EC2 endpoint:'", 
-            "dig ec2.us-east-1.amazonaws.com",
+            f"dig ec2.{self.infra_config.region}.amazonaws.com",
             "echo",
             "echo 'Testing STS endpoint:'",
-            "dig sts.us-east-1.amazonaws.com",
+            f"dig sts.{self.infra_config.region}.amazonaws.com",
             "echo",
             "echo '=== AWS CLI Tests ==='",
             "echo 'Getting caller identity (STS):'",
-            "aws sts get-caller-identity --region us-east-1",
+            f"aws sts get-caller-identity --region {self.infra_config.region}",
             "echo",
             "echo 'Listing EC2 instances:'",
-            "aws ec2 describe-instances --region us-east-1 --max-items 1",
+            f"aws ec2 describe-instances --region {self.infra_config.region} --max-items 1",
             "echo",
             "echo 'Testing SSM:'",
-            "aws ssm describe-instance-information --region us-east-1 --max-items 1",
+            f"aws ssm describe-instance-information --region {self.infra_config.region} --max-items 1",
             "EOF",
             
             "chmod +x /home/ec2-user/test-endpoints.sh",
@@ -276,10 +268,10 @@ class VpcInterfaceEndpointsStack(Stack):
             "echo '=== Network Connectivity Test ==='",
             "echo",
             "echo 'Testing connectivity to SSM endpoint on port 443:'",
-            "nc -zv ssm.us-east-1.amazonaws.com 443",
+            f"nc -zv ssm.{self.infra_config.region}.amazonaws.com 443",
             "echo",
             "echo 'Testing connectivity to EC2 endpoint on port 443:'",
-            "nc -zv ec2.us-east-1.amazonaws.com 443",
+            f"nc -zv ec2.{self.infra_config.region}.amazonaws.com 443",
             "echo",
             "echo 'Route table:'",
             "ip route",
@@ -292,20 +284,52 @@ class VpcInterfaceEndpointsStack(Stack):
             "chown ec2-user:ec2-user /home/ec2-user/test-network.sh",
         )
 
-        # Amazon Linux 2 AMI
+        # Map configuration to CDK enums
+        instance_class_mapping = {
+            "BURSTABLE2": ec2.InstanceClass.BURSTABLE2,
+            "BURSTABLE3": ec2.InstanceClass.BURSTABLE3,
+            "STANDARD5": ec2.InstanceClass.STANDARD5,
+            "MEMORY5": ec2.InstanceClass.MEMORY5,
+        }
+        
+        instance_size_mapping = {
+            "NANO": ec2.InstanceSize.NANO,
+            "MICRO": ec2.InstanceSize.MICRO,
+            "SMALL": ec2.InstanceSize.SMALL,
+            "MEDIUM": ec2.InstanceSize.MEDIUM,
+            "LARGE": ec2.InstanceSize.LARGE,
+        }
+        
+        edition_mapping = {
+            "STANDARD": ec2.AmazonLinuxEdition.STANDARD,
+            "MINIMAL": ec2.AmazonLinuxEdition.MINIMAL,
+        }
+        
+        virt_mapping = {
+            "HVM": ec2.AmazonLinuxVirt.HVM,
+            "PV": ec2.AmazonLinuxVirt.PV,
+        }
+        
+        storage_mapping = {
+            "GENERAL_PURPOSE": ec2.AmazonLinuxStorage.GENERAL_PURPOSE,
+            "EBS": ec2.AmazonLinuxStorage.EBS,
+        }
+
+        # Amazon Linux 2 AMI with configuration
         amzn_linux = ec2.MachineImage.latest_amazon_linux2(
-            edition=ec2.AmazonLinuxEdition.STANDARD,
-            virtualization=ec2.AmazonLinuxVirt.HVM,
-            storage=ec2.AmazonLinuxStorage.GENERAL_PURPOSE,
+            edition=edition_mapping.get(self.infra_config.ec2.amazon_linux_edition, ec2.AmazonLinuxEdition.STANDARD),
+            virtualization=virt_mapping.get(self.infra_config.ec2.virtualization, ec2.AmazonLinuxVirt.HVM),
+            storage=storage_mapping.get(self.infra_config.ec2.storage, ec2.AmazonLinuxStorage.GENERAL_PURPOSE),
         )
 
-        # Create EC2 instance
+        # Create EC2 instance with configuration
+        instance_class = instance_class_mapping.get(self.infra_config.ec2.instance_class, ec2.InstanceClass.BURSTABLE3)
+        instance_size = instance_size_mapping.get(self.infra_config.ec2.instance_size, ec2.InstanceSize.MICRO)
+        
         self.test_instance = ec2.Instance(
             self,
             "VpcEndpointTestInstance",
-            instance_type=ec2.InstanceType.of(
-                ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO
-            ),
+            instance_type=ec2.InstanceType.of(instance_class, instance_size),
             machine_image=amzn_linux,
             vpc=self.vpc,
             vpc_subnets=ec2.SubnetSelection(
@@ -336,7 +360,7 @@ class VpcInterfaceEndpointsStack(Stack):
         CfnOutput(
             self,
             "SsmEndpointId",
-            value=self.ssm_endpoint.vpc_endpoint_id,
+            value=self.endpoints.get("ssm", self.endpoints.get("SSM", "")).vpc_endpoint_id if self.endpoints.get("ssm", self.endpoints.get("SSM")) else "Not created",
             description="SSM VPC Endpoint ID",
         )
 

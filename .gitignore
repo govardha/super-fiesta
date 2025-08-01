@@ -93,12 +93,27 @@ configs/secrets.yaml
 configs/production.yaml
 configs/prod.yaml
 
-# Environment-specific configs
+# Environment Variables and Secrets
+.env
+.env.local
+.env.*.local
 .env.production
 .env.prod
 .env.staging
 .env.dev
 .env.test
+
+# Environment-specific config files (containing account IDs)
+configs/sandbox.yaml
+configs/production.yaml
+configs/development.yaml
+configs/staging.yaml
+configs/**/secrets.yaml
+configs/**/secrets.yml
+
+# Keep example files but ignore the real ones
+!configs/*.example.yaml
+!configs/*.example.yml
 
 # SSH Keys
 id_rsa
