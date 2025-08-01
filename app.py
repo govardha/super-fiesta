@@ -2,9 +2,9 @@
 import os
 
 import aws_cdk as cdk
+from configs.config import AppConfigs
 
-from super_fiesta.super_fiesta_stack import SuperFiestaStack
-
+from stacks.super_fiesta.super_fiesta_stack import SuperFiestaStack
 
 app = cdk.App()
 SuperFiestaStack(app, "SuperFiestaStack",
