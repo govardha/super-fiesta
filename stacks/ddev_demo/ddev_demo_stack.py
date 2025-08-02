@@ -1,4 +1,5 @@
 # File: stacks/ddev_demo/ddev_demo_stack.py
+# Minimal version to test deployment
 
 from aws_cdk import (
     Stack,
@@ -6,12 +7,8 @@ from aws_cdk import (
     aws_elasticloadbalancingv2 as elbv2,
     aws_certificatemanager as acm,
     aws_iam as iam,
-    aws_ssm as ssm,
     CfnOutput,
     Duration,
-    custom_resources as cr,
-    CustomResource,
-    aws_lambda as lambda_,
 )
 from constructs import Construct
 from configs.config import AppConfigs
@@ -31,12 +28,6 @@ class DdevDemoStack(Stack):
         
         # Create Application Load Balancer
         self.create_application_load_balancer()
-        
-        # Create Lambda functions
-        self.create_lambda_functions()
-        
-        # Create CloudFlare DNS automation
-        self.create_cloudflare_automation()
         
         # Create EC2 instance
         self.create_ddev_instance()
@@ -96,16 +87,13 @@ class DdevDemoStack(Stack):
             description="SSH access",
         )
 
-        # fck-nat instance (t4g.nano ARM64 for lowest cost)
-        # Using us-east-1 AMI - update for other regions
-        fck_nat_ami_id = "ami-0f69bc61d11ea4787"  # fck-nat ARM64 AMI for us-east-1
-        
+        # Use the official fck-nat AMI for us-east-1
         self.fck_nat_instance = ec2.Instance(
             self,
-            "FckNatInstance",
-            instance_type=ec2.InstanceType("t4g.nano"),
+            "FckNatInstance", 
+            instance_type=ec2.InstanceType("t4g.nano"),  # ARM64 instance for fck-nat
             machine_image=ec2.MachineImage.generic_linux({
-                self.region: fck_nat_ami_id
+                "us-east-1": "ami-075a0093cd9926d44"  # fck-nat ARM64 AMI from your query
             }),
             vpc=self.vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
@@ -206,68 +194,6 @@ class DdevDemoStack(Stack):
                 port="443",
                 permanent=True
             )
-        )
-
-    def create_lambda_functions(self):
-        """Create Lambda functions from separate directories"""
-        
-        # CloudFlare DNS Lambda
-        self.dns_lambda = lambda_.Function(
-            self,
-            "CloudFlareDnsFunction",
-            runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="index.handler",
-            timeout=Duration.minutes(5),
-            code=lambda_.Code.from_asset("lambdas/cloudflare_dns"),
-        )
-        
-        # Grant permissions to read SSM parameters
-        self.dns_lambda.add_to_role_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=["ssm:GetParameter"],
-                resources=[
-                    f"arn:aws:ssm:{self.region}:{self.account}:parameter/ddev-demo/cloudflare/*"
-                ]
-            )
-        )
-
-    def create_cloudflare_automation(self):
-        """Setup CloudFlare DNS automation"""
-        
-        # Store CloudFlare credentials in SSM (placeholder values)
-        ssm.StringParameter(
-            self,
-            "CloudFlareApiTokenParam",
-            parameter_name="/ddev-demo/cloudflare/api-token",
-            string_value="PLACEHOLDER-SET-MANUALLY",
-            description="CloudFlare API Token (set manually after deployment)",
-            # Remove deprecated type parameter - it defaults to String for secure strings
-        )
-        
-        # For secure string, use CfnParameter directly
-        ssm.CfnParameter(
-            self,
-            "CloudFlareApiTokenSecure",
-            name="/ddev-demo/cloudflare/api-token-secure",
-            value="PLACEHOLDER-SET-MANUALLY",
-            type="SecureString",
-            description="CloudFlare API Token (secure - set manually after deployment)",
-        )
-        
-        ssm.StringParameter(
-            self,
-            "CloudFlareZoneIdParam", 
-            parameter_name="/ddev-demo/cloudflare/zone-id",
-            string_value="PLACEHOLDER-SET-MANUALLY",
-            description="CloudFlare Zone ID for vadai.org (set manually after deployment)",
-        )
-        
-        # Custom resource provider for DNS management
-        self.dns_provider = cr.Provider(
-            self,
-            "CloudFlareDnsProvider",
-            on_event_handler=self.dns_lambda,
         )
 
     def create_ddev_instance(self):
@@ -411,29 +337,6 @@ class DdevDemoStack(Stack):
             ],
             action=elbv2.ListenerAction.forward([self.qa2_tg])
         )
-        
-        # Create DNS records for qa1 and qa2
-        CustomResource(
-            self,
-            "DnsRecordQA1",
-            service_token=self.dns_provider.service_token,
-            properties={
-                "DomainName": "qa1.vadai.org",
-                "TargetValue": self.alb.load_balancer_dns_name,
-                "RecordType": "CNAME"
-            }
-        )
-        
-        CustomResource(
-            self,
-            "DnsRecordQA2",
-            service_token=self.dns_provider.service_token,
-            properties={
-                "DomainName": "qa2.vadai.org",
-                "TargetValue": self.alb.load_balancer_dns_name,
-                "RecordType": "CNAME"
-            }
-        )
 
     def create_outputs(self):
         """Create CloudFormation outputs"""
@@ -454,20 +357,6 @@ class DdevDemoStack(Stack):
         
         CfnOutput(
             self,
-            "LoadBalancerArn",
-            value=self.alb.load_balancer_arn,
-            description="Application Load Balancer ARN",
-        )
-        
-        CfnOutput(
-            self,
-            "HTTPSListenerArn",
-            value=self.https_listener.listener_arn,
-            description="HTTPS Listener ARN for adding new rules",
-        )
-        
-        CfnOutput(
-            self,
             "DdevInstanceId",
             value=self.ddev_instance.instance_id,
             description="DDEV EC2 Instance ID",
@@ -482,16 +371,16 @@ class DdevDemoStack(Stack):
         
         CfnOutput(
             self,
-            "CloudFlareDNSLambda",
-            value=self.dns_lambda.function_name,
-            description="CloudFlare DNS management Lambda function",
+            "QA1TargetGroupArn",
+            value=self.qa1_tg.target_group_arn,
+            description="QA1 Target Group ARN",
         )
         
         CfnOutput(
             self,
-            "CertificateArn",
-            value=self.certificate.certificate_arn,
-            description="ACM Certificate ARN for *.vadai.org",
+            "QA2TargetGroupArn",
+            value=self.qa2_tg.target_group_arn,
+            description="QA2 Target Group ARN",
         )
         
         CfnOutput(
@@ -499,18 +388,4 @@ class DdevDemoStack(Stack):
             "ConnectToInstance",
             value=f"aws ssm start-session --target {self.ddev_instance.instance_id}",
             description="Command to connect to DDEV instance via SSM",
-        )
-        
-        CfnOutput(
-            self,
-            "InitialSites",
-            value="qa1.vadai.org, qa2.vadai.org (configure manually after DDEV setup)",
-            description="Initial sites - target groups created, configure DDEV manually",
-        )
-        
-        CfnOutput(
-            self,
-            "SetupInstructions",
-            value="1. Set CloudFlare credentials in SSM 2. Validate ACM certificate 3. SSH to instance and run ddev-setup.sh",
-            description="Next steps after deployment",
         )
