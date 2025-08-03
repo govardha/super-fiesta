@@ -181,25 +181,27 @@ class DdevDemoStack(Stack):
                 generation=ec2.UbuntuGeneration.UBUNTU_24_04,
             )
         
-        # Security Group for instance
+        # Security Group for instance (now in private subnet)
         self.ddev_sg = ec2.SecurityGroup(
             self,
             "DdevSecurityGroup",
             vpc=self.vpc,
-            description="Security group for DDEV instance",
+            description="Security group for DDEV instance in private subnet",
             allow_all_outbound=True,
         )
         
-        self.ddev_sg.add_ingress_rule(
-            peer=ec2.Peer.any_ipv4(),
-            connection=ec2.Port.tcp(22),
-            description="SSH access",
-        )
-        
+        # Allow traffic from ALB security group for DDEV ports
         self.ddev_sg.add_ingress_rule(
             peer=ec2.Peer.security_group_id(self.alb_sg.security_group_id),
             connection=ec2.Port.tcp_range(8001, 8010),
             description="DDEV ports from ALB",
+        )
+        
+        # Optional: Allow SSH from within VPC (for debugging through bastion/fck-nat)
+        self.ddev_sg.add_ingress_rule(
+            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
+            connection=ec2.Port.tcp(22),
+            description="SSH from within VPC",
         )
         
         # IAM role
@@ -230,12 +232,17 @@ class DdevDemoStack(Stack):
             "systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || systemctl start amazon-ssm-agent",
             "",
             "cat > /home/ubuntu/README.md << 'EOF'",
-            "# DDEV Demo Instance (Ubuntu 24.04)",
-            "This instance is ready for DDEV setup.",
+            "# DDEV Demo Instance (Ubuntu 24.04) - Private Subnet with fck-nat",
+            "This instance is in a private subnet and uses fck-nat for internet access.",
             "",
             "## Connection Options:",
             "- SSM: aws ssm start-session --target $(curl -s http://169.254.169.254/latest/meta-data/instance-id)",
-            f"- SSH: ssh ubuntu@$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4) {'-i your-key.pem' if key_name else '(if key configured)'}",
+            "- No direct SSH from internet (private subnet)",
+            "",
+            "## Network Verification:",
+            "- Run: ./verify-fck-nat.sh to test internet connectivity through fck-nat",
+            "- Check route: ip route show",
+            "- Test DNS: nslookup google.com",
             "",
             "## Setup Steps:",
             "1. Run your ddev-setup.sh script",
@@ -245,9 +252,38 @@ class DdevDemoStack(Stack):
             "- OS: Ubuntu 24.04 LTS",
             "- Storage: 20GB GP3 EBS",
             "- Docker: Pre-installed",
+            "- Network: Private subnet with fck-nat internet access",
             "EOF",
             "",
-            "chown ubuntu:ubuntu /home/ubuntu/README.md",
+            "# Create network verification script",
+            "cat > /home/ubuntu/verify-fck-nat.sh << 'EOF'",
+            "#!/bin/bash",
+            "echo '=== fck-nat Network Verification ==='",
+            "echo",
+            "echo '1. Current IP and routing:'",
+            "echo 'Private IP:' $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)",
+            "echo 'Public IP (through NAT):' $(curl -s http://checkip.amazonaws.com/ || echo 'Failed to get public IP')",
+            "echo",
+            "echo '2. Route table:'",
+            "ip route show",
+            "echo",
+            "echo '3. DNS resolution:'",
+            "nslookup google.com",
+            "echo",
+            "echo '4. Internet connectivity test:'",
+            "curl -s -o /dev/null -w 'HTTP Status: %{http_code}\\n' http://google.com",
+            "echo",
+            "echo '5. Package manager test (apt):'",
+            "apt list --upgradable 2>/dev/null | head -5",
+            "echo",
+            "echo '6. Docker registry test:'",
+            "timeout 10 docker pull hello-world:latest >/dev/null 2>&1 && echo 'Docker registry: OK' || echo 'Docker registry: Failed'",
+            "echo",
+            "echo 'If all tests pass, fck-nat routing is working correctly!'",
+            "EOF",
+            "",
+            "chmod +x /home/ubuntu/verify-fck-nat.sh",
+            "chown ubuntu:ubuntu /home/ubuntu/README.md /home/ubuntu/verify-fck-nat.sh",
         )
         
         # Create instance configuration dictionary
@@ -257,7 +293,7 @@ class DdevDemoStack(Stack):
             "instance_type": ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
             "machine_image": machine_image,
             "vpc": self.vpc,
-            "vpc_subnets": ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+            "vpc_subnets": ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),  # Use private subnet with fck-nat
             "security_group": self.ddev_sg,
             "role": self.ddev_role,
             "block_devices": [
@@ -279,6 +315,9 @@ class DdevDemoStack(Stack):
             instance_config["key_pair"] = ec2.KeyPair.from_key_pair_name(
                 self, "DdevKeyPair", key_name
             )
+        
+        # IMPORTANT: Place in private subnet to use fck-nat for internet access
+        instance_config["vpc_subnets"] = ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)
         
         # Create the EC2 instance with Ubuntu 24.04 and larger EBS volume
         self.ddev_instance = ec2.Instance(**instance_config)
@@ -359,6 +398,13 @@ class DdevDemoStack(Stack):
         
         CfnOutput(
             self,
+            "DdevInstancePrivateIP",
+            value=self.ddev_instance.instance_private_ip,
+            description="DDEV Instance Private IP",
+        )
+        
+        CfnOutput(
+            self,
             "DdevInstanceId",
             value=self.ddev_instance.instance_id,
             description="DDEV Instance ID",
@@ -366,9 +412,16 @@ class DdevDemoStack(Stack):
         
         CfnOutput(
             self,
-            "DdevInstancePublicIP",
-            value=self.ddev_instance.instance_public_ip,
-            description="DDEV Instance Public IP",
+            "SSMCommand",
+            value=f"aws ssm start-session --target {self.ddev_instance.instance_id}",
+            description="SSM command to connect to instance (primary access method)",
+        )
+        
+        CfnOutput(
+            self,
+            "NetworkArchitecture",
+            value="Private subnet → fck-nat (t4g.nano) → Internet Gateway → Internet",
+            description="Network routing architecture",
         )
         
         CfnOutput(
@@ -387,21 +440,21 @@ class DdevDemoStack(Stack):
         
         CfnOutput(
             self,
-            "SSHCommand",
-            value=f"ssh ubuntu@{self.ddev_instance.instance_public_ip}",
-            description="SSH command to connect to instance",
-        )
-        
-        CfnOutput(
-            self,
-            "SSMCommand",
-            value=f"aws ssm start-session --target {self.ddev_instance.instance_id}",
-            description="SSM command to connect to instance",
+            "AccessInstructions",
+            value="1. Connect via SSM: aws ssm start-session --target " + self.ddev_instance.instance_id + " 2. Run: ./verify-fck-nat.sh to test network 3. SSH only from within VPC",
+            description="How to access and verify the instance",
         )
         
         CfnOutput(
             self,
             "CostSavings",
-            value="Using fck-nat: ~$3/month vs NAT Gateway: ~$45/month (93% savings!)",
-            description="Cost comparison",
+            value="fck-nat (t4g.nano): ~$3/month vs AWS NAT Gateway: ~$45/month = 93% savings ($42/month saved)",
+            description="Cost comparison and savings",
+        )
+        
+        CfnOutput(
+            self,
+            "FckNatInfo",
+            value="fck-nat instance automatically created in public subnet - handles all outbound traffic from private subnet",
+            description="About the fck-nat setup",
         )
