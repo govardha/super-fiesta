@@ -49,17 +49,25 @@ class DdevDemoStack(Stack):
         
         # Create the fck-nat provider if available
         if FckNatInstanceProvider:
+            # Get key pair name from configuration
+            key_name = getattr(self.infra_config.ec2, 'key_name', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None
+            
             # Create fck-nat provider with specific configuration
-            self.fck_nat_provider = FckNatInstanceProvider(
-                instance_type=ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.NANO),
-                machine_image=ec2.MachineImage.latest_amazon_linux2(
+            fck_nat_kwargs = {
+                'instance_type': ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.NANO),
+                'machine_image': ec2.MachineImage.latest_amazon_linux2(
                     cpu_type=ec2.AmazonLinuxCpuType.ARM_64
                 ),
-                # Optional: Add security group rules
-                security_group=None,  # Will create default security group
-                # Optional: Add key pair for SSH access to NAT instance
-                key_name=getattr(self.infra_config.ec2, 'key_name', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None,
-            )
+                'security_group': None,  # Will create default security group
+            }
+            
+            # Add key pair if available
+            if key_name:
+                fck_nat_kwargs['key_pair'] = ec2.KeyPair.from_key_pair_name(
+                    self, "FckNatKeyPair", key_name
+                )
+            
+            self.fck_nat_provider = FckNatInstanceProvider(**fck_nat_kwargs)
             nat_gateways = 1
         else:
             # Fallback to standard NAT Gateway if fck-nat not available
@@ -242,20 +250,17 @@ class DdevDemoStack(Stack):
             "chown ubuntu:ubuntu /home/ubuntu/README.md",
         )
         
-        # Create the EC2 instance with Ubuntu 24.04 and larger EBS volume
-        self.ddev_instance = ec2.Instance(
-            self,
-            "DdevInstance",
-            instance_type=ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
-            machine_image=machine_image,
-            vpc=self.vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
-            security_group=self.ddev_sg,
-            role=self.ddev_role,
-            # Add SSH key if configured
-            key_name=key_name,
-            # Add larger EBS volume (20GB GP3)
-            block_devices=[
+        # Create instance configuration dictionary
+        instance_config = {
+            "scope": self,
+            "id": "DdevInstance",
+            "instance_type": ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
+            "machine_image": machine_image,
+            "vpc": self.vpc,
+            "vpc_subnets": ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+            "security_group": self.ddev_sg,
+            "role": self.ddev_role,
+            "block_devices": [
                 ec2.BlockDevice(
                     device_name="/dev/sda1",  # Ubuntu root device
                     volume=ec2.BlockDeviceVolume.ebs(
@@ -266,8 +271,17 @@ class DdevDemoStack(Stack):
                     )
                 )
             ],
-            user_data=user_data_script,
-        )
+            "user_data": user_data_script,
+        }
+        
+        # Add key pair if configured (using new CDK v2 syntax)
+        if key_name:
+            instance_config["key_pair"] = ec2.KeyPair.from_key_pair_name(
+                self, "DdevKeyPair", key_name
+            )
+        
+        # Create the EC2 instance with Ubuntu 24.04 and larger EBS volume
+        self.ddev_instance = ec2.Instance(**instance_config)
 
     def create_target_groups(self):
         """Create target groups"""
