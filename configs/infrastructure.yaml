@@ -14,6 +14,9 @@ globals:
     amazon_linux_edition: "STANDARD"
     virtualization: "HVM"
     storage: "GENERAL_PURPOSE"
+    key_name: "govardha-ddev-demo"
+    # Optional: specific AMI override
+    ami_id: "ami-0e86e20dae9224db8"  # Ubuntu 24.04 us-east-1
   
   logging:
     flow_logs_group_name: "/aws/vpc/flowlogs"

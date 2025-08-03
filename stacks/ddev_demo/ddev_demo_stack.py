@@ -13,6 +13,13 @@ from constructs import Construct
 from configs.config import AppConfigs
 from configs.models import InfrastructureSpec
 
+# Import the fck-nat construct
+try:
+    from cdk_fck_nat import FckNatInstanceProvider
+except ImportError:
+    print("Warning: cdk-fck-nat not installed. Run: pip install cdk-fck-nat")
+    FckNatInstanceProvider = None
+
 
 class DdevDemoStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, account_name: str = "sandbox", **kwargs) -> None:
@@ -22,31 +29,51 @@ class DdevDemoStack(Stack):
         self.config_loader = AppConfigs()
         self.infra_config: InfrastructureSpec = self.config_loader.get_infrastructure_info(account_name)
 
-        # Create VPC with fck-nat
-        self.create_vpc_with_fck_nat()
+        # Create simple VPC
+        self.create_simple_vpc()
         
         # Create Application Load Balancer
         self.create_application_load_balancer()
         
-        # Create EC2 instance
+        # Create EC2 instance with Ubuntu 24.04 and 20GB storage
         self.create_ddev_instance()
         
-        # Create initial target groups for qa1 and qa2
-        self.create_initial_target_groups()
+        # Create target groups
+        self.create_target_groups()
         
         # Create outputs
         self.create_outputs()
 
-    def create_vpc_with_fck_nat(self):
-        """Create VPC with fck-nat for cost-effective NAT"""
+    def create_simple_vpc(self):
+        """Create VPC with fck-nat for cost optimization"""
         
-        # Create VPC
+        # Create the fck-nat provider if available
+        if FckNatInstanceProvider:
+            # Create fck-nat provider with specific configuration
+            self.fck_nat_provider = FckNatInstanceProvider(
+                instance_type=ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.NANO),
+                machine_image=ec2.MachineImage.latest_amazon_linux2(
+                    cpu_type=ec2.AmazonLinuxCpuType.ARM_64
+                ),
+                # Optional: Add security group rules
+                security_group=None,  # Will create default security group
+                # Optional: Add key pair for SSH access to NAT instance
+                key_name=getattr(self.infra_config.ec2, 'key_name', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None,
+            )
+            nat_gateways = 1
+        else:
+            # Fallback to standard NAT Gateway if fck-nat not available
+            print("Warning: Using standard NAT Gateway (more expensive)")
+            self.fck_nat_provider = None
+            nat_gateways = 1
+        
         self.vpc = ec2.Vpc(
             self,
             "DdevDemoVpc",
             ip_addresses=ec2.IpAddresses.cidr(self.infra_config.vpc.cidr),
             max_azs=self.infra_config.vpc.max_azs,
-            nat_gateways=0,  # We'll use fck-nat instead
+            nat_gateways=nat_gateways,
+            nat_gateway_provider=self.fck_nat_provider,  # This creates the fck-nat instance
             subnet_configuration=[
                 ec2.SubnetConfiguration(
                     name="Public",
@@ -59,82 +86,12 @@ class DdevDemoStack(Stack):
                     cidr_mask=self.infra_config.vpc.subnet_mask,
                 ),
             ],
-            enable_dns_hostnames=self.infra_config.vpc.enable_dns_hostnames,
-            enable_dns_support=self.infra_config.vpc.enable_dns_support,
+            enable_dns_hostnames=True,
+            enable_dns_support=True,
         )
-
-        # Security Group for fck-nat instance
-        self.fck_nat_sg = ec2.SecurityGroup(
-            self,
-            "FckNatSecurityGroup",
-            vpc=self.vpc,
-            description="Security group for fck-nat instance",
-            allow_all_outbound=True,
-        )
-
-        # Allow all traffic from VPC CIDR
-        self.fck_nat_sg.add_ingress_rule(
-            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
-            connection=ec2.Port.all_traffic(),
-            description="All traffic from VPC",
-        )
-
-        # Allow SSH from anywhere (adjust as needed)
-        self.fck_nat_sg.add_ingress_rule(
-            peer=ec2.Peer.any_ipv4(),
-            connection=ec2.Port.tcp(22),
-            description="SSH access",
-        )
-
-        # fck-nat instance with SSM agent
-        self.fck_nat_instance = ec2.Instance(
-            self,
-            "FckNatInstance", 
-            instance_type=ec2.InstanceType("t4g.nano"),
-            machine_image=ec2.MachineImage.generic_linux({
-                "us-east-1": "ami-075a0093cd9926d44"
-            }),
-            vpc=self.vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
-            security_group=self.fck_nat_sg,
-            source_dest_check=False,
-        )
-        
-        # Install SSM agent on fck-nat instance
-        self.fck_nat_instance.user_data.add_commands(
-            "#!/bin/bash",
-            "# Install SSM agent for AL2023",
-            "dnf install -y amazon-ssm-agent",
-            "systemctl enable amazon-ssm-agent",
-            "systemctl start amazon-ssm-agent",
-        )
-
-        # Update route tables for private subnets to use fck-nat
-        for i, subnet in enumerate(self.vpc.private_subnets):
-            route_table = ec2.CfnRouteTable(
-                self,
-                f"PrivateRouteTable{i}",
-                vpc_id=self.vpc.vpc_id,
-                tags=[{"key": "Name", "value": f"PrivateRouteTable{i}"}]
-            )
-            
-            ec2.CfnSubnetRouteTableAssociation(
-                self,
-                f"PrivateSubnetAssociation{i}",
-                subnet_id=subnet.subnet_id,
-                route_table_id=route_table.ref,
-            )
-            
-            ec2.CfnRoute(
-                self,
-                f"PrivateRoute{i}",
-                route_table_id=route_table.ref,
-                destination_cidr_block="0.0.0.0/0",
-                instance_id=self.fck_nat_instance.instance_id,
-            )
 
     def create_application_load_balancer(self):
-        """Create Application Load Balancer for DDEV sites"""
+        """Create Application Load Balancer"""
         
         # Security Group for ALB
         self.alb_sg = ec2.SecurityGroup(
@@ -145,7 +102,6 @@ class DdevDemoStack(Stack):
             allow_all_outbound=True,
         )
         
-        # Allow HTTP and HTTPS from internet
         self.alb_sg.add_ingress_rule(
             peer=ec2.Peer.any_ipv4(),
             connection=ec2.Port.tcp(80),
@@ -168,7 +124,7 @@ class DdevDemoStack(Stack):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
         )
         
-        # Certificate for *.vadai.org
+        # Certificate
         self.certificate = acm.Certificate(
             self,
             "WildcardCertificate",
@@ -189,7 +145,7 @@ class DdevDemoStack(Stack):
             )
         )
         
-        # HTTP Listener (redirect to HTTPS)
+        # HTTP Listener
         self.alb.add_listener(
             "HTTPListener",
             port=80,
@@ -202,9 +158,22 @@ class DdevDemoStack(Stack):
         )
 
     def create_ddev_instance(self):
-        """Create EC2 instance for DDEV"""
+        """Create EC2 instance with Ubuntu 24.04 and 20GB storage"""
         
-        # Security Group for DDEV instance
+        # Get configuration from infrastructure.yaml
+        ami_id = getattr(self.infra_config.ec2, 'ami_id', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None
+        key_name = getattr(self.infra_config.ec2, 'key_name', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None
+        
+        # Choose machine image based on configuration
+        if ami_id:
+            machine_image = ec2.MachineImage.generic_linux({self.region: ami_id})
+        else:
+            # Default to Ubuntu 24.04 LTS
+            machine_image = ec2.MachineImage.latest_ubuntu(
+                generation=ec2.UbuntuGeneration.UBUNTU_24_04,
+            )
+        
+        # Security Group for instance
         self.ddev_sg = ec2.SecurityGroup(
             self,
             "DdevSecurityGroup",
@@ -213,21 +182,19 @@ class DdevDemoStack(Stack):
             allow_all_outbound=True,
         )
         
-        # Allow SSH from anywhere
         self.ddev_sg.add_ingress_rule(
             peer=ec2.Peer.any_ipv4(),
             connection=ec2.Port.tcp(22),
             description="SSH access",
         )
         
-        # Allow ALB to access DDEV ports
         self.ddev_sg.add_ingress_rule(
             peer=ec2.Peer.security_group_id(self.alb_sg.security_group_id),
             connection=ec2.Port.tcp_range(8001, 8010),
             description="DDEV ports from ALB",
         )
         
-        # IAM role for the instance
+        # IAM role
         self.ddev_role = iam.Role(
             self,
             "DdevInstanceRole",
@@ -237,48 +204,73 @@ class DdevDemoStack(Stack):
             ],
         )
         
-        # User data with SSM agent installation
+        # User data for Ubuntu 24.04
         user_data_script = ec2.UserData.for_linux()
         user_data_script.add_commands(
             "#!/bin/bash",
-            "yum update -y",
-            "yum install -y git curl wget amazon-ssm-agent",
-            "systemctl enable amazon-ssm-agent",
-            "systemctl start amazon-ssm-agent",
+            "apt-get update -y",
+            "apt-get install -y git curl wget docker.io docker-compose-v2",
             "",
-            "cat > /home/ec2-user/README.md << 'EOF'",
-            "# DDEV Demo Instance Setup",
+            "# Start and enable Docker",
+            "systemctl start docker",
+            "systemctl enable docker",
+            "usermod -a -G docker ubuntu",
             "",
+            "# Install AWS SSM agent (should already be there on Ubuntu AMI)",
+            "snap install amazon-ssm-agent --classic || apt-get install -y amazon-ssm-agent",
+            "systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || systemctl enable amazon-ssm-agent",
+            "systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || systemctl start amazon-ssm-agent",
+            "",
+            "cat > /home/ubuntu/README.md << 'EOF'",
+            "# DDEV Demo Instance (Ubuntu 24.04)",
             "This instance is ready for DDEV setup.",
             "",
-            "## Next Steps:",
-            "1. Copy the ddev-setup.sh script to this instance",
-            "2. Run: chmod +x ddev-setup.sh && sudo ./ddev-setup.sh",
+            "## Connection Options:",
+            "- SSM: aws ssm start-session --target $(curl -s http://169.254.169.254/latest/meta-data/instance-id)",
+            f"- SSH: ssh ubuntu@$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4) {'-i your-key.pem' if key_name else '(if key configured)'}",
             "",
-            "## After DDEV setup, your sites will be:",
-            "- https://qa1.vadai.org",
-            "- https://qa2.vadai.org",
+            "## Setup Steps:",
+            "1. Run your ddev-setup.sh script",
+            "2. Sites will be available at qa1.vadai.org, qa2.vadai.org, etc.",
             "",
+            "## System Info:",
+            "- OS: Ubuntu 24.04 LTS",
+            "- Storage: 20GB GP3 EBS",
+            "- Docker: Pre-installed",
             "EOF",
             "",
-            "chown ec2-user:ec2-user /home/ec2-user/README.md",
+            "chown ubuntu:ubuntu /home/ubuntu/README.md",
         )
         
-        # Create the EC2 instance
+        # Create the EC2 instance with Ubuntu 24.04 and larger EBS volume
         self.ddev_instance = ec2.Instance(
             self,
             "DdevInstance",
             instance_type=ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
-            machine_image=ec2.MachineImage.latest_amazon_linux2(),
+            machine_image=machine_image,
             vpc=self.vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=self.ddev_sg,
             role=self.ddev_role,
+            # Add SSH key if configured
+            key_name=key_name,
+            # Add larger EBS volume (20GB GP3)
+            block_devices=[
+                ec2.BlockDevice(
+                    device_name="/dev/sda1",  # Ubuntu root device
+                    volume=ec2.BlockDeviceVolume.ebs(
+                        volume_size=20,  # 20 GB
+                        volume_type=ec2.EbsDeviceVolumeType.GP3,
+                        delete_on_termination=True,
+                        encrypted=False,
+                    )
+                )
+            ],
             user_data=user_data_script,
         )
 
-    def create_initial_target_groups(self):
-        """Create target groups and listener rules for qa1 and qa2"""
+    def create_target_groups(self):
+        """Create target groups"""
         
         # Target group for qa1
         self.qa1_tg = elbv2.ApplicationTargetGroup(
@@ -322,7 +314,7 @@ class DdevDemoStack(Stack):
             ),
         )
         
-        # Listener rules for qa1 and qa2
+        # Listener rules
         self.https_listener.add_action(
             "QA1ListenerRule",
             priority=110,
@@ -342,34 +334,27 @@ class DdevDemoStack(Stack):
         )
 
     def create_outputs(self):
-        """Create CloudFormation outputs"""
-        
-        CfnOutput(
-            self,
-            "VpcId",
-            value=self.vpc.vpc_id,
-            description="VPC ID",
-        )
+        """Create outputs"""
         
         CfnOutput(
             self,
             "LoadBalancerDNS",
             value=self.alb.load_balancer_dns_name,
-            description="Application Load Balancer DNS name",
+            description="ALB DNS name",
         )
         
         CfnOutput(
             self,
             "DdevInstanceId",
             value=self.ddev_instance.instance_id,
-            description="DDEV EC2 Instance ID",
+            description="DDEV Instance ID",
         )
         
         CfnOutput(
             self,
-            "FckNatInstanceId",
-            value=self.fck_nat_instance.instance_id,
-            description="FCK-NAT Instance ID",
+            "DdevInstancePublicIP",
+            value=self.ddev_instance.instance_public_ip,
+            description="DDEV Instance Public IP",
         )
         
         CfnOutput(
@@ -388,7 +373,21 @@ class DdevDemoStack(Stack):
         
         CfnOutput(
             self,
-            "ConnectToInstance",
+            "SSHCommand",
+            value=f"ssh ubuntu@{self.ddev_instance.instance_public_ip}",
+            description="SSH command to connect to instance",
+        )
+        
+        CfnOutput(
+            self,
+            "SSMCommand",
             value=f"aws ssm start-session --target {self.ddev_instance.instance_id}",
-            description="Command to connect to DDEV instance via SSM",
+            description="SSM command to connect to instance",
+        )
+        
+        CfnOutput(
+            self,
+            "CostSavings",
+            value="Using fck-nat: ~$3/month vs NAT Gateway: ~$45/month (93% savings!)",
+            description="Cost comparison",
         )

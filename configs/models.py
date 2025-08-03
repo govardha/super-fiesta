@@ -13,7 +13,6 @@ class VpcConfig:
     enable_dns_support: bool = True
     nat_gateways: int = 0
 
-
 @dataclass
 class Ec2Config:
     instance_type: str
@@ -22,24 +21,21 @@ class Ec2Config:
     amazon_linux_edition: str = "STANDARD"
     virtualization: str = "HVM"
     storage: str = "GENERAL_PURPOSE"
-
-
+    ami_id: Optional[str] = None  # Custom AMI ID override
+    key_name: Optional[str] = None  # SSH key pair name
 @dataclass
 class LoggingConfig:
     flow_logs_group_name: str = "/aws/vpc/flowlogs"
     retention_days: int = 7
-
 
 @dataclass
 class EndpointService:
     name: str
     service: str
 
-
 @dataclass
 class EndpointsConfig:
     services: List[EndpointService]
-
 
 @dataclass
 class InfrastructureSpec:
