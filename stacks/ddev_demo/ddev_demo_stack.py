@@ -1,5 +1,4 @@
 # File: stacks/ddev_demo/ddev_demo_stack.py
-# Minimal version to test deployment
 
 from aws_cdk import (
     Stack,
@@ -87,23 +86,31 @@ class DdevDemoStack(Stack):
             description="SSH access",
         )
 
-        # Use the official fck-nat AMI for us-east-1
+        # fck-nat instance with SSM agent
         self.fck_nat_instance = ec2.Instance(
             self,
             "FckNatInstance", 
-            instance_type=ec2.InstanceType("t4g.nano"),  # ARM64 instance for fck-nat
+            instance_type=ec2.InstanceType("t4g.nano"),
             machine_image=ec2.MachineImage.generic_linux({
-                "us-east-1": "ami-075a0093cd9926d44"  # fck-nat ARM64 AMI from your query
+                "us-east-1": "ami-075a0093cd9926d44"
             }),
             vpc=self.vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=self.fck_nat_sg,
-            source_dest_check=False,  # Required for NAT functionality
+            source_dest_check=False,
+        )
+        
+        # Install SSM agent on fck-nat instance
+        self.fck_nat_instance.user_data.add_commands(
+            "#!/bin/bash",
+            "# Install SSM agent for AL2023",
+            "dnf install -y amazon-ssm-agent",
+            "systemctl enable amazon-ssm-agent",
+            "systemctl start amazon-ssm-agent",
         )
 
         # Update route tables for private subnets to use fck-nat
         for i, subnet in enumerate(self.vpc.private_subnets):
-            # Create custom route table
             route_table = ec2.CfnRouteTable(
                 self,
                 f"PrivateRouteTable{i}",
@@ -111,7 +118,6 @@ class DdevDemoStack(Stack):
                 tags=[{"key": "Name", "value": f"PrivateRouteTable{i}"}]
             )
             
-            # Associate route table with subnet
             ec2.CfnSubnetRouteTableAssociation(
                 self,
                 f"PrivateSubnetAssociation{i}",
@@ -119,7 +125,6 @@ class DdevDemoStack(Stack):
                 route_table_id=route_table.ref,
             )
             
-            # Add route to fck-nat instance
             ec2.CfnRoute(
                 self,
                 f"PrivateRoute{i}",
@@ -171,7 +176,7 @@ class DdevDemoStack(Stack):
             validation=acm.CertificateValidation.from_dns(),
         )
         
-        # HTTPS Listener with default 404 response
+        # HTTPS Listener
         self.https_listener = self.alb.add_listener(
             "HTTPSListener",
             port=443,
@@ -215,7 +220,7 @@ class DdevDemoStack(Stack):
             description="SSH access",
         )
         
-        # Allow ALB to access DDEV ports (8001-8010)
+        # Allow ALB to access DDEV ports
         self.ddev_sg.add_ingress_rule(
             peer=ec2.Peer.security_group_id(self.alb_sg.security_group_id),
             connection=ec2.Port.tcp_range(8001, 8010),
@@ -232,14 +237,15 @@ class DdevDemoStack(Stack):
             ],
         )
         
-        # Minimal user data - just create a readme
+        # User data with SSM agent installation
         user_data_script = ec2.UserData.for_linux()
         user_data_script.add_commands(
             "#!/bin/bash",
             "yum update -y",
-            "yum install -y git curl wget",
+            "yum install -y git curl wget amazon-ssm-agent",
+            "systemctl enable amazon-ssm-agent",
+            "systemctl start amazon-ssm-agent",
             "",
-            "# Create setup instructions",
             "cat > /home/ec2-user/README.md << 'EOF'",
             "# DDEV Demo Instance Setup",
             "",
@@ -248,9 +254,6 @@ class DdevDemoStack(Stack):
             "## Next Steps:",
             "1. Copy the ddev-setup.sh script to this instance",
             "2. Run: chmod +x ddev-setup.sh && sudo ./ddev-setup.sh",
-            "",
-            "## Connect via SSM:",
-            "aws ssm start-session --target INSTANCE_ID",
             "",
             "## After DDEV setup, your sites will be:",
             "- https://qa1.vadai.org",
