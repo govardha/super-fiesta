@@ -21,6 +21,28 @@ globals:
   logging:
     flow_logs_group_name: "/aws/vpc/flowlogs"
     retention_days: 2
+
+  waf:
+    enabled: true
+    name: "DdevWaf"
+    description: "WAF for DDEV Demo Stack"
+    cloudwatch_metrics_enabled: true
+    sampled_requests_enabled: true
+    blocked_countries:
+      - "RU"  # Russia
+      - "CN"  # China  
+      - "KP"  # North Korea
+      - "IR"  # Iran (optional)
+    # IP Allow List (CIDR blocks)
+    allowed_ips:
+      - "0.0.0.0/0"
+    # AWS Managed Rules (boolean controls)
+    aws_common_rule_set: true       # AWS Core Rule Set
+    aws_known_bad_inputs: true      # Known Bad Inputs
+    aws_sql_injection: true         # SQL Injection Protection
+    aws_xss_protection: true        # XSS Protection
+    aws_rate_limiting: false        # Rate limiting (can be expensive)
+    rate_limit_requests: 500       # Requests per 5 minutes if rate limiting enabled
     
   endpoints:
     services:

@@ -3,6 +3,7 @@
 from aws_cdk import (
     Stack,
     aws_ec2 as ec2,
+    aws_wafv2 as wafv2,
     aws_elasticloadbalancingv2 as elbv2,
     aws_certificatemanager as acm,
     aws_iam as iam,
@@ -27,6 +28,12 @@ class DdevDemoStack(Stack):
         
         # Create Application Load Balancer
         self.create_application_load_balancer()
+
+        # Create WAF (if enabled in configuration)
+        self.create_waf()
+    
+        # Associate WAF with ALB (after ALB is created)  
+        self.associate_waf_with_alb()
         
         # Create EC2 instance with Ubuntu 24.04 and 20GB storage
         self.create_ddev_instance()
@@ -130,7 +137,7 @@ class DdevDemoStack(Stack):
             domain_name="*.webdev.vadai.org",
             validation=acm.CertificateValidation.from_dns(),
         )
-        
+
         # HTTPS Listener
         self.https_listener = self.alb.add_listener(
             "HTTPSListener",
@@ -329,12 +336,232 @@ class DdevDemoStack(Stack):
             # Catch-all listener rule for *.webdev.vadai.org
             self.https_listener.add_action(
                 "TraefikListenerRule",
-                priority=100,  # High priority to catch all subdomains
+                priority=10,  # Lower number = higher priority (changed from 100 to 10)
                 conditions=[
                     elbv2.ListenerCondition.host_headers(["*.webdev.vadai.org"])
                 ],
                 action=elbv2.ListenerAction.forward([self.traefik_tg])
             )
+
+    def create_waf(self):
+        """Create WAF v2 Web ACL with IP allow list, country blocking, and managed rules"""
+        
+        if not self.infra_config.waf or not self.infra_config.waf.enabled:
+            return None
+        
+        waf_config = self.infra_config.waf
+        rules = []
+        priority = 1
+        
+        # IP Allow List Rule (highest priority - these IPs always get through)
+        if waf_config.allowed_ips and waf_config.allowed_ips != ["0.0.0.0/0"]:
+            # Create IP set for allowed IPs
+            self.allowed_ip_set = wafv2.CfnIPSet(
+                self,
+                "AllowedIPSet",
+                addresses=waf_config.allowed_ips,
+                ip_address_version="IPV4",
+                scope="REGIONAL",
+                name=f"{waf_config.name}-AllowedIPs",
+                description="Allowed IP addresses - always permitted",
+            )
+            
+            # Rule to allow IPs in the allow list (highest priority)
+            rules.append(wafv2.CfnWebACL.RuleProperty(
+                name="AllowedIPsRule",
+                priority=priority,
+                statement=wafv2.CfnWebACL.StatementProperty(
+                    ip_set_reference_statement=wafv2.CfnWebACL.IPSetReferenceStatementProperty(
+                        arn=self.allowed_ip_set.attr_arn
+                    )
+                ),
+                action=wafv2.CfnWebACL.RuleActionProperty(allow={}),
+                visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                    sampled_requests_enabled=waf_config.sampled_requests_enabled,
+                    cloud_watch_metrics_enabled=waf_config.cloudwatch_metrics_enabled,
+                    metric_name=f"{waf_config.name}-AllowedIPs",
+                ),
+            ))
+            priority += 1
+        
+        # Country Blocking Rule (second priority - block before other processing)
+        if waf_config.blocked_countries:
+            rules.append(wafv2.CfnWebACL.RuleProperty(
+                name="BlockedCountriesRule",
+                priority=priority,
+                statement=wafv2.CfnWebACL.StatementProperty(
+                    geo_match_statement=wafv2.CfnWebACL.GeoMatchStatementProperty(
+                        country_codes=waf_config.blocked_countries
+                    )
+                ),
+                action=wafv2.CfnWebACL.RuleActionProperty(block={}),
+                visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                    sampled_requests_enabled=waf_config.sampled_requests_enabled,
+                    cloud_watch_metrics_enabled=waf_config.cloudwatch_metrics_enabled,
+                    metric_name=f"{waf_config.name}-BlockedCountries",
+                ),
+            ))
+            priority += 1
+        
+        # AWS Managed Rules (using correct names from CLI)
+        managed_rules = []
+        
+        if waf_config.aws_common_rule_set:
+            managed_rules.append(("AWSManagedRulesCommonRuleSet", "AWSManagedRulesCommonRuleSet"))
+        
+        if waf_config.aws_known_bad_inputs:
+            managed_rules.append(("AWSManagedRulesKnownBadInputsRuleSet", "AWSManagedRulesKnownBadInputsRuleSet"))
+        
+        if waf_config.aws_sql_injection:
+            managed_rules.append(("AWSManagedRulesSQLiRuleSet", "AWSManagedRulesSQLiRuleSet"))
+        
+        # Add managed rule groups
+        for rule_name, rule_group in managed_rules:
+            rules.append(wafv2.CfnWebACL.RuleProperty(
+                name=rule_name,
+                priority=priority,
+                override_action=wafv2.CfnWebACL.OverrideActionProperty(none={}),
+                statement=wafv2.CfnWebACL.StatementProperty(
+                    managed_rule_group_statement=wafv2.CfnWebACL.ManagedRuleGroupStatementProperty(
+                        vendor_name="AWS",
+                        name=rule_group,
+                    )
+                ),
+                visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                    sampled_requests_enabled=waf_config.sampled_requests_enabled,
+                    cloud_watch_metrics_enabled=waf_config.cloudwatch_metrics_enabled,
+                    metric_name=f"{waf_config.name}-{rule_name}",
+                ),
+            ))
+            priority += 1
+        
+        # Rate limiting rule (if enabled)
+        if waf_config.aws_rate_limiting:
+            rules.append(wafv2.CfnWebACL.RuleProperty(
+                name="RateLimitRule",
+                priority=priority,
+                statement=wafv2.CfnWebACL.StatementProperty(
+                    rate_based_statement=wafv2.CfnWebACL.RateBasedStatementProperty(
+                        limit=waf_config.rate_limit_requests,
+                        aggregate_key_type="IP",
+                    )
+                ),
+                action=wafv2.CfnWebACL.RuleActionProperty(block={}),
+                visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                    sampled_requests_enabled=waf_config.sampled_requests_enabled,
+                    cloud_watch_metrics_enabled=waf_config.cloudwatch_metrics_enabled,
+                    metric_name=f"{waf_config.name}-RateLimit",
+                ),
+            ))
+        
+        # Custom response for blocked requests
+        custom_response_body = """<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Access Denied</title>
+        <style>
+            body { 
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white; margin: 0; padding: 40px; text-align: center; min-height: 100vh;
+                display: flex; align-items: center; justify-content: center;
+            }
+            .container { 
+                background: rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; 
+                backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.2);
+                max-width: 600px; box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            }
+            h1 { font-size: 3em; margin-bottom: 20px; }
+            .shield { font-size: 4em; margin-bottom: 20px; }
+            .reason { background: rgba(255,255,255,0.2); padding: 15px; border-radius: 10px; margin: 20px 0; }
+            .contact { margin-top: 30px; font-size: 0.9em; opacity: 0.8; }
+            .timestamp { font-family: monospace; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="shield">🛡️</div>
+            <h1>Access Denied</h1>
+            <p>Your request has been blocked by our Web Application Firewall.</p>
+            <div class="reason">
+                <strong>Possible reasons:</strong><br>
+                • Geographic restrictions (RU, CN, KP blocked)<br>
+                • IP address not in allow list<br>
+                • Suspicious request pattern detected<br>
+                • Rate limiting threshold exceeded
+            </div>
+            <p>If you believe this is an error, please contact the site administrator.</p>
+            <div class="contact">
+                <div class="timestamp">Blocked at: <span id="currentTime"></span></div>
+                <div>Protected by AWS WAF • DDEV Demo Stack</div>
+            </div>
+        </div>
+        <script>
+            // Set current timestamp in the browser
+            const now = new Date();
+            const dateString = now.toISOString().split('T')[0]; // Gets YYYY-MM-DD part
+            document.getElementById('currentTime').textContent = dateString;;
+        </script>
+    </body>
+    </html>"""
+
+        # Default action with custom response: 
+        # - If we have IP allow list: BLOCK everything else (whitelist mode)
+        # - If no IP restrictions: ALLOW (managed rules will block bad traffic)
+        if waf_config.allowed_ips and waf_config.allowed_ips != ["0.0.0.0/0"]:
+            default_action = wafv2.CfnWebACL.DefaultActionProperty(
+                block=wafv2.CfnWebACL.BlockActionProperty(
+                    custom_response=wafv2.CfnWebACL.CustomResponseProperty(
+                        response_code=403,
+                        custom_response_body_key="AccessDeniedPage"
+                    )
+                )
+            )
+        else:
+            default_action = wafv2.CfnWebACL.DefaultActionProperty(allow={})
+        
+        # Create the Web ACL
+        self.web_acl = wafv2.CfnWebACL(
+            self,
+            "DdevWebACL",
+            scope="REGIONAL",
+            default_action=default_action,
+            name=waf_config.name,
+            description=waf_config.description,
+            rules=rules,
+            # Custom response bodies
+            custom_response_bodies={
+                "AccessDeniedPage": wafv2.CfnWebACL.CustomResponseBodyProperty(
+                    content_type="TEXT_HTML",
+                    content=custom_response_body
+                )
+            },
+            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                sampled_requests_enabled=waf_config.sampled_requests_enabled,
+                cloud_watch_metrics_enabled=waf_config.cloudwatch_metrics_enabled,
+                metric_name=waf_config.name,
+            ),
+        )
+        
+        return self.web_acl
+
+    # Add this method to associate WAF with ALB:
+    def associate_waf_with_alb(self):
+        """Associate WAF with Application Load Balancer"""
+        
+        if not hasattr(self, 'web_acl') or not self.web_acl:
+            return
+        
+        # Associate Web ACL with ALB
+        self.waf_association = wafv2.CfnWebACLAssociation(
+            self,
+            "WAFALBAssociation",
+            resource_arn=self.alb.load_balancer_arn,
+            web_acl_arn=self.web_acl.attr_arn,
+        )
+
 
     def create_outputs(self):
         """Create outputs"""
@@ -415,3 +642,45 @@ class DdevDemoStack(Stack):
             value="Using official fck-nat AMI with pre-configured NAT software - no user data installation needed",
             description="About the fck-nat setup",
         )
+                # WAF Outputs (only if WAF is enabled)
+        if hasattr(self, 'web_acl') and self.web_acl:
+            CfnOutput(
+                self,
+                "WebACLArn",
+                value=self.web_acl.attr_arn,
+                description="WAF Web ACL ARN",
+            )
+            
+            # Output WAF configuration summary
+            waf_features = []
+            if self.infra_config.waf.allowed_ips:
+                waf_features.append(f"IP Allow List ({len(self.infra_config.waf.allowed_ips)} IPs)")
+            if self.infra_config.waf.aws_common_rule_set:
+                waf_features.append("Common Rules")
+            if self.infra_config.waf.aws_sql_injection:
+                waf_features.append("SQLi Protection")
+            if self.infra_config.waf.aws_xss_protection:
+                waf_features.append("XSS Protection")
+            if self.infra_config.waf.aws_rate_limiting:
+                waf_features.append(f"Rate Limiting ({self.infra_config.waf.rate_limit_requests}/5min)")
+            
+            CfnOutput(
+                self,
+                "WAFFeatures",
+                value=", ".join(waf_features) if waf_features else "Basic WAF",
+                description="Enabled WAF features",
+            )
+            
+            CfnOutput(
+                self,
+                "WAFDefaultAction",
+                value="BLOCK (IP whitelist mode)" if self.infra_config.waf.allowed_ips else "ALLOW (managed rules mode)",
+                description="WAF default action behavior",
+            )
+        else:
+            CfnOutput(
+                self,
+                "WAFStatus",
+                value="WAF is disabled in configuration",
+                description="WAF Configuration Status",
+            )
