@@ -326,19 +326,31 @@ class VpcInterfaceEndpointsStack(Stack):
         instance_class = instance_class_mapping.get(self.infra_config.ec2.instance_class, ec2.InstanceClass.BURSTABLE3)
         instance_size = instance_size_mapping.get(self.infra_config.ec2.instance_size, ec2.InstanceSize.MICRO)
         
-        self.test_instance = ec2.Instance(
-            self,
-            "VpcEndpointTestInstance",
-            instance_type=ec2.InstanceType.of(instance_class, instance_size),
-            machine_image=amzn_linux,
-            vpc=self.vpc,
-            vpc_subnets=ec2.SubnetSelection(
+        # Get key name from configuration
+        key_name = getattr(self.infra_config.ec2, 'key_name', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None
+        
+        # Create instance configuration dictionary
+        instance_config = {
+            "scope": self,
+            "id": "VpcEndpointTestInstance",
+            "instance_type": ec2.InstanceType.of(instance_class, instance_size),
+            "machine_image": amzn_linux,
+            "vpc": self.vpc,
+            "vpc_subnets": ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
             ),
-            security_group=self.instance_sg,
-            role=self.ec2_role,
-            user_data=user_data_script,
-        )
+            "security_group": self.instance_sg,
+            "role": self.ec2_role,
+            "user_data": user_data_script,
+        }
+        
+        # Add key pair if configured (using new CDK v2 syntax)
+        if key_name:
+            instance_config["key_pair"] = ec2.KeyPair.from_key_pair_name(
+                self, "VpcEndpointTestKeyPair", key_name
+            )
+        
+        self.test_instance = ec2.Instance(**instance_config)
 
     def create_outputs(self):
         """Create CloudFormation outputs"""

@@ -13,13 +13,6 @@ from constructs import Construct
 from configs.config import AppConfigs
 from configs.models import InfrastructureSpec
 
-# Import the fck-nat construct
-try:
-    from cdk_fck_nat import FckNatInstanceProvider
-except ImportError:
-    print("Warning: cdk-fck-nat not installed. Run: pip install cdk-fck-nat")
-    FckNatInstanceProvider = None
-
 
 class DdevDemoStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, account_name: str = "sandbox", **kwargs) -> None:
@@ -29,8 +22,8 @@ class DdevDemoStack(Stack):
         self.config_loader = AppConfigs()
         self.infra_config: InfrastructureSpec = self.config_loader.get_infrastructure_info(account_name)
 
-        # Create simple VPC
-        self.create_simple_vpc()
+        # Create VPC with fck-nat
+        self.create_vpc()
         
         # Create Application Load Balancer
         self.create_application_load_balancer()
@@ -44,44 +37,35 @@ class DdevDemoStack(Stack):
         # Create outputs
         self.create_outputs()
 
-    def create_simple_vpc(self):
-        """Create VPC with fck-nat for cost optimization"""
+    def create_vpc(self):
+        """Create VPC with fck-nat using official AMI"""
         
-        # Create the fck-nat provider if available
-        if FckNatInstanceProvider:
-            # Get key pair name from configuration
-            key_name = getattr(self.infra_config.ec2, 'key_name', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None
-            
-            # Create fck-nat provider with specific configuration
-            fck_nat_kwargs = {
-                'instance_type': ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.NANO),
-                'machine_image': ec2.MachineImage.latest_amazon_linux2(
-                    cpu_type=ec2.AmazonLinuxCpuType.ARM_64
-                ),
-                'security_group': None,  # Will create default security group
-            }
-            
-            # Add key pair if available
-            if key_name:
-                fck_nat_kwargs['key_pair'] = ec2.KeyPair.from_key_pair_name(
-                    self, "FckNatKeyPair", key_name
-                )
-            
-            self.fck_nat_provider = FckNatInstanceProvider(**fck_nat_kwargs)
-            nat_gateways = 1
-        else:
-            # Fallback to standard NAT Gateway if fck-nat not available
-            print("Warning: Using standard NAT Gateway (more expensive)")
-            self.fck_nat_provider = None
-            nat_gateways = 1
+        # Get key pair name from configuration
+        key_name = getattr(self.infra_config.ec2, 'key_name', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None
         
+        # Create NAT provider using official fck-nat AMI
+        nat_provider_config = {
+            "instance_type": ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.NANO),
+            "machine_image": ec2.LookupMachineImage(
+                name="fck-nat-al2023-*-arm64-ebs",
+                owners=["568608671756"]  # Official fck-nat AMI owner
+            )
+        }
+        
+        # Add key name if configured
+        if key_name:
+            nat_provider_config["key_name"] = key_name
+            
+        self.fck_nat_provider = ec2.NatInstanceProviderV2(**nat_provider_config)
+        
+        # Create VPC
         self.vpc = ec2.Vpc(
             self,
             "DdevDemoVpc",
             ip_addresses=ec2.IpAddresses.cidr(self.infra_config.vpc.cidr),
             max_azs=self.infra_config.vpc.max_azs,
-            nat_gateways=nat_gateways,
-            nat_gateway_provider=self.fck_nat_provider,  # This creates the fck-nat instance
+            nat_gateways=1,
+            nat_gateway_provider=self.fck_nat_provider,
             subnet_configuration=[
                 ec2.SubnetConfiguration(
                     name="Public",
@@ -96,6 +80,13 @@ class DdevDemoStack(Stack):
             ],
             enable_dns_hostnames=True,
             enable_dns_support=True,
+        )
+
+        # Fix the security group - add inbound rules for VPC traffic
+        self.fck_nat_provider.security_group.add_ingress_rule(
+            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
+            connection=ec2.Port.all_traffic(),
+            description="Allow traffic from VPC CIDR for NAT"
         )
 
     def create_application_load_balancer(self):
@@ -166,7 +157,7 @@ class DdevDemoStack(Stack):
         )
 
     def create_ddev_instance(self):
-        """Create EC2 instance with Ubuntu 24.04 and 20GB storage"""
+        """Create EC2 instance with Ubuntu 24.04 and 20GB storage in private subnet"""
         
         # Get configuration from infrastructure.yaml
         ami_id = getattr(self.infra_config.ec2, 'ami_id', None) if hasattr(self.infra_config, 'ec2') and self.infra_config.ec2 else None
@@ -181,7 +172,7 @@ class DdevDemoStack(Stack):
                 generation=ec2.UbuntuGeneration.UBUNTU_24_04,
             )
         
-        # Security Group for instance (now in private subnet)
+        # Security Group for instance (in private subnet)
         self.ddev_sg = ec2.SecurityGroup(
             self,
             "DdevSecurityGroup",
@@ -286,17 +277,18 @@ class DdevDemoStack(Stack):
             "chown ubuntu:ubuntu /home/ubuntu/README.md /home/ubuntu/verify-fck-nat.sh",
         )
         
-        # Create instance configuration dictionary
-        instance_config = {
-            "scope": self,
-            "id": "DdevInstance",
-            "instance_type": ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
-            "machine_image": machine_image,
-            "vpc": self.vpc,
-            "vpc_subnets": ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),  # Use private subnet with fck-nat
-            "security_group": self.ddev_sg,
-            "role": self.ddev_role,
-            "block_devices": [
+        # Create the EC2 instance
+        self.ddev_instance = ec2.Instance(
+            self,
+            "DdevInstance",
+            instance_type=ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.MICRO),
+            machine_image=machine_image,
+            vpc=self.vpc,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            security_group=self.ddev_sg,
+            role=self.ddev_role,
+            key_pair=ec2.KeyPair.from_key_pair_name(self, "DdevKeyPair", key_name) if key_name else None,
+            block_devices=[
                 ec2.BlockDevice(
                     device_name="/dev/sda1",  # Ubuntu root device
                     volume=ec2.BlockDeviceVolume.ebs(
@@ -307,20 +299,8 @@ class DdevDemoStack(Stack):
                     )
                 )
             ],
-            "user_data": user_data_script,
-        }
-        
-        # Add key pair if configured (using new CDK v2 syntax)
-        if key_name:
-            instance_config["key_pair"] = ec2.KeyPair.from_key_pair_name(
-                self, "DdevKeyPair", key_name
-            )
-        
-        # IMPORTANT: Place in private subnet to use fck-nat for internet access
-        instance_config["vpc_subnets"] = ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)
-        
-        # Create the EC2 instance with Ubuntu 24.04 and larger EBS volume
-        self.ddev_instance = ec2.Instance(**instance_config)
+            user_data=user_data_script,
+        )
 
     def create_target_groups(self):
         """Create target groups"""
@@ -455,6 +435,6 @@ class DdevDemoStack(Stack):
         CfnOutput(
             self,
             "FckNatInfo",
-            value="fck-nat instance automatically created in public subnet - handles all outbound traffic from private subnet",
+            value="Using official fck-nat AMI with pre-configured NAT software - no user data installation needed",
             description="About the fck-nat setup",
         )
