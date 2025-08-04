@@ -127,7 +127,7 @@ class DdevDemoStack(Stack):
         self.certificate = acm.Certificate(
             self,
             "WildcardCertificate",
-            domain_name="*.vadai.org",
+            domain_name="*.webdev.vadai.org",
             validation=acm.CertificateValidation.from_dns(),
         )
         
@@ -181,11 +181,11 @@ class DdevDemoStack(Stack):
             allow_all_outbound=True,
         )
         
-        # Allow traffic from ALB security group for DDEV ports
+        # Allow traffic from ALB security group for port 80 (traefik router)
         self.ddev_sg.add_ingress_rule(
             peer=ec2.Peer.security_group_id(self.alb_sg.security_group_id),
-            connection=ec2.Port.tcp_range(8001, 8010),
-            description="DDEV ports from ALB",
+            connection=ec2.Port.tcp(80),
+             description="HTTP traffic from ALB to traefik router",
         )
         
         # Optional: Allow SSH from within VPC (for debugging through bastion/fck-nat)
@@ -303,68 +303,38 @@ class DdevDemoStack(Stack):
         )
 
     def create_target_groups(self):
-        """Create target groups"""
-        
-        # Target group for qa1
-        self.qa1_tg = elbv2.ApplicationTargetGroup(
-            self,
-            "QA1TargetGroup",
-            vpc=self.vpc,
-            port=8001,
-            protocol=elbv2.ApplicationProtocol.HTTP,
-            target_type=elbv2.TargetType.INSTANCE,
-            health_check=elbv2.HealthCheck(
-                enabled=True,
-                healthy_http_codes="200,404",
-                path="/health",
-                port="8001",
-                protocol=elbv2.Protocol.HTTP,
-                timeout=Duration.seconds(5),
-                interval=Duration.seconds(30),
-                healthy_threshold_count=2,
-                unhealthy_threshold_count=5,
-            ),
-        )
-        
-        # Target group for qa2
-        self.qa2_tg = elbv2.ApplicationTargetGroup(
-            self,
-            "QA2TargetGroup",
-            vpc=self.vpc,
-            port=8002,
-            protocol=elbv2.ApplicationProtocol.HTTP,
-            target_type=elbv2.TargetType.INSTANCE,
-            health_check=elbv2.HealthCheck(
-                enabled=True,
-                healthy_http_codes="200,404",
-                path="/health",
-                port="8002",
-                protocol=elbv2.Protocol.HTTP,
-                timeout=Duration.seconds(5),
-                interval=Duration.seconds(30),
-                healthy_threshold_count=2,
-                unhealthy_threshold_count=5,
-            ),
-        )
-        
-        # Listener rules
-        self.https_listener.add_action(
-            "QA1ListenerRule",
-            priority=110,
-            conditions=[
-                elbv2.ListenerCondition.host_headers(["qa1.vadai.org"])
-            ],
-            action=elbv2.ListenerAction.forward([self.qa1_tg])
-        )
-        
-        self.https_listener.add_action(
-            "QA2ListenerRule",
-            priority=120,
-            conditions=[
-                elbv2.ListenerCondition.host_headers(["qa2.vadai.org"])
-            ],
-            action=elbv2.ListenerAction.forward([self.qa2_tg])
-        )
+            """Create single target group for traefik router"""
+            
+            # Single target group for traefik router on port 80
+            self.traefik_tg = elbv2.ApplicationTargetGroup(
+                self,
+                "TraefikTargetGroup",
+                vpc=self.vpc,
+                port=80,
+                protocol=elbv2.ApplicationProtocol.HTTP,
+                target_type=elbv2.TargetType.INSTANCE,
+                health_check=elbv2.HealthCheck(
+                    enabled=True,
+                    healthy_http_codes="200,404",
+                    path="/",  # Traefik will handle health checks
+                    port="80",
+                    protocol=elbv2.Protocol.HTTP,
+                    timeout=Duration.seconds(5),
+                    interval=Duration.seconds(30),
+                    healthy_threshold_count=2,
+                    unhealthy_threshold_count=5,
+                ),
+            )
+            
+            # Catch-all listener rule for *.webdev.vadai.org
+            self.https_listener.add_action(
+                "TraefikListenerRule",
+                priority=100,  # High priority to catch all subdomains
+                conditions=[
+                    elbv2.ListenerCondition.host_headers(["*.webdev.vadai.org"])
+                ],
+                action=elbv2.ListenerAction.forward([self.traefik_tg])
+            )
 
     def create_outputs(self):
         """Create outputs"""
@@ -403,20 +373,27 @@ class DdevDemoStack(Stack):
             value="Private subnet → fck-nat (t4g.nano) → Internet Gateway → Internet",
             description="Network routing architecture",
         )
-        
+
         CfnOutput(
             self,
-            "QA1TargetGroupArn",
-            value=self.qa1_tg.target_group_arn,
-            description="QA1 Target Group ARN",
+            "TraefikTargetGroupArn",
+            value=self.traefik_tg.target_group_arn,
+            description="Traefik Router Target Group ARN",
         )
-        
+
         CfnOutput(
             self,
-            "QA2TargetGroupArn",
-            value=self.qa2_tg.target_group_arn,
-            description="QA2 Target Group ARN",
+            "TraefikInfo",
+            value="All *.webdev.vadai.org requests route to traefik on port 80",
+            description="Traefik routing information",
         )
+
+        CfnOutput(
+            self,
+            "ExampleSites",
+            value="Example: qa1.webdev.vadai.org, qa2.webdev.vadai.org, qa99.webdev.vadai.org",
+            description="Example site URLs that will route through traefik",
+        ) 
         
         CfnOutput(
             self,

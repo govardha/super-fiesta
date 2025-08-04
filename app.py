@@ -38,5 +38,4 @@ DdevDemoStack(
     ),
 )
 
-
 app.synth()
