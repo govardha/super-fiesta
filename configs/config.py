@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import yaml
 from dacite import from_dict
 
-from configs.models import InfrastructureSpec, VpcConfig, Ec2Config, LoggingConfig, EndpointsConfig, EndpointService
+from configs.models import InfrastructureSpec, VpcConfig, Ec2Config, LoggingConfig, EndpointsConfig, EndpointService, WafConfig
 from utils.converters import to_dict
 from utils.converters import update
 from utils.logger import configure_logger
@@ -117,11 +117,17 @@ class AppConfigs:
             ]
             endpoints_config = EndpointsConfig(services=endpoint_services)
 
+        waf_config = None
+        if "waf" in merged_config:
+            waf_data = merged_config["waf"]
+            waf_config = from_dict(data_class=WafConfig, data=waf_data)
+
         return InfrastructureSpec(
             account=merged_config["account"],
             region=merged_config["region"],
             vpc=vpc_config,
             ec2=ec2_config,
             logging=logging_config,
-            endpoints=endpoints_config
+            endpoints=endpoints_config,
+            waf=waf_config
         )
