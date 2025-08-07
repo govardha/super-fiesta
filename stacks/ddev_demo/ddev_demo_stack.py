@@ -5,6 +5,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_wafv2 as wafv2,
     aws_elasticloadbalancingv2 as elbv2,
+    aws_elasticloadbalancingv2_targets as elbv2_targets, 
     aws_certificatemanager as acm,
     aws_iam as iam,
     CfnOutput,
@@ -40,6 +41,14 @@ class DdevDemoStack(Stack):
         
         # Create target groups
         self.create_target_groups()
+
+        # Add after self.create_target_groups()
+        self.create_guacamole_security_group() 
+        self.create_guacamole_target_group()
+        self.create_guacamole_listener_rule()
+        self.create_guacamole_instance()
+
+        self.add_guacamole_outputs()
         
         # Create outputs
         self.create_outputs()
@@ -562,6 +571,211 @@ class DdevDemoStack(Stack):
             web_acl_arn=self.web_acl.attr_arn,
         )
 
+    def create_guacamole_security_group(self):
+        """Create security group for Guacamole instance"""
+        
+        self.guacamole_sg = ec2.SecurityGroup(
+            self,
+            "GuacamoleSecurityGroup",
+            vpc=self.vpc,
+            description="Security group for Apache Guacamole instance",
+            allow_all_outbound=True,
+        )
+        
+        # Allow HTTP from ALB security group (Guacamole web interface)
+        self.guacamole_sg.add_ingress_rule(
+            peer=ec2.Peer.security_group_id(self.alb_sg.security_group_id),
+            connection=ec2.Port.tcp(8080),
+            description="HTTP from ALB to Guacamole web interface",
+        )
+        
+        # Allow SSH from within VPC (for management)
+        self.guacamole_sg.add_ingress_rule(
+            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
+            connection=ec2.Port.tcp(22),
+            description="SSH from within VPC",
+        )
+
+
+    def create_guacamole_target_group(self):
+        """Create target group for Guacamole"""
+        
+        self.guacamole_tg = elbv2.ApplicationTargetGroup(
+            self,
+            "GuacamoleTargetGroup",
+            vpc=self.vpc,
+            port=8080,
+            protocol=elbv2.ApplicationProtocol.HTTP,
+            target_type=elbv2.TargetType.INSTANCE,
+            health_check=elbv2.HealthCheck(
+                enabled=True,
+                healthy_http_codes="200",
+                path="/guacamole/",  # Guacamole default path
+                port="8080",
+                protocol=elbv2.Protocol.HTTP,
+                timeout=Duration.seconds(10),
+                interval=Duration.seconds(30),
+                healthy_threshold_count=2,
+                unhealthy_threshold_count=5,
+            ),
+        )
+    
+    def create_guacamole_listener_rule(self):
+        """Add listener rule for Guacamole subdomain"""
+        self.https_listener.add_action(
+            "GuacamoleListenerRule",
+            priority=5,  # Higher priority than traefik (lower number = higher priority)
+            conditions=[
+                elbv2.ListenerCondition.host_headers(["guac.webdev.vadai.org"])
+            ],
+            action=elbv2.ListenerAction.forward([self.guacamole_tg])
+    )
+
+
+    
+    def add_guacamole_outputs(self):
+        """Add outputs for Guacamole resources"""
+        
+        guac_config = self.infra_config.guacamole or self.infra_config.ec2
+        
+        # ... your existing outputs ...
+        
+        CfnOutput(
+            self,
+            "GuacamoleSpecs",
+            value=f"Instance: {guac_config.instance_type}, Storage: {guac_config.ebs_volume_size}GB {guac_config.ebs_volume_type}",
+            description="Guacamole instance specifications",
+        )
+        
+        CfnOutput(
+            self,
+            "GuacamoleMonitoring",
+            value="Enabled" if guac_config.enable_monitoring else "Disabled",
+            description="Detailed monitoring status",
+        )
+    
+        
+    def create_guacamole_instance(self):
+        """Create EC2 instance for Apache Guacamole using configuration"""
+        
+        # Get Guacamole-specific configuration
+        guac_config = self.infra_config.guacamole
+        if not guac_config:
+            guac_config = self.infra_config.ec2
+        
+        # Get AMI and key configuration
+        ami_id = getattr(guac_config, 'ami_id', None) or getattr(self.infra_config.ec2, 'ami_id', None)
+        key_name = getattr(self.infra_config.ec2, 'key_name', None)
+        
+        # Choose machine image
+        if ami_id:
+            machine_image = ec2.MachineImage.generic_linux({self.region: ami_id})
+        else:
+            machine_image = ec2.MachineImage.latest_ubuntu(
+                generation=ec2.UbuntuGeneration.UBUNTU_24_04,
+            )
+        
+        # Map configuration to CDK enums
+        instance_class_mapping = {
+            "BURSTABLE2": ec2.InstanceClass.BURSTABLE2,
+            "BURSTABLE3": ec2.InstanceClass.BURSTABLE3,
+            "BURSTABLE4_GRAVITON": ec2.InstanceClass.BURSTABLE4_GRAVITON,
+            "STANDARD5": ec2.InstanceClass.STANDARD5,
+            "MEMORY5": ec2.InstanceClass.MEMORY5,
+            "COMPUTE5": ec2.InstanceClass.COMPUTE5,
+        }
+        
+        instance_size_mapping = {
+            "NANO": ec2.InstanceSize.NANO,
+            "MICRO": ec2.InstanceSize.MICRO,
+            "SMALL": ec2.InstanceSize.SMALL,
+            "MEDIUM": ec2.InstanceSize.MEDIUM,
+            "LARGE": ec2.InstanceSize.LARGE,
+            "XLARGE": ec2.InstanceSize.XLARGE,
+            "XLARGE2": ec2.InstanceSize.XLARGE2,
+            "XLARGE4": ec2.InstanceSize.XLARGE4,
+        }
+        
+        volume_type_mapping = {
+            "GP2": ec2.EbsDeviceVolumeType.GP2,
+            "GP3": ec2.EbsDeviceVolumeType.GP3,
+            "IO1": ec2.EbsDeviceVolumeType.IO1,
+            "IO2": ec2.EbsDeviceVolumeType.IO2,
+        }
+        
+        # Get instance specifications from config
+        instance_class = instance_class_mapping.get(guac_config.instance_class, ec2.InstanceClass.BURSTABLE3)
+        instance_size = instance_size_mapping.get(guac_config.instance_size, ec2.InstanceSize.MEDIUM)
+        volume_type = volume_type_mapping.get(guac_config.ebs_volume_type, ec2.EbsDeviceVolumeType.GP3)
+        
+        # User data script (following DDEV pattern)
+        user_data_script = ec2.UserData.for_linux()
+        user_data_script.add_commands(
+            "#!/bin/bash",
+            "apt-get update -y",
+            "apt-get install -y docker.io docker-compose-v2 nginx awscli",
+            "systemctl start docker",
+            "systemctl enable docker",
+            "usermod -a -G docker ubuntu",
+            "",
+            "# Create simple health check for testing",
+            "mkdir -p /var/www/html",
+            "cat > /var/www/html/index.html << 'EOF'",
+            "<h1>Guacamole Instance Ready</h1>",
+            "<p>Instance is running and ready for Guacamole installation</p>",
+            f"<p>Instance Type: {guac_config.instance_type}</p>",
+            f"<p>Storage: {guac_config.ebs_volume_size}GB {guac_config.ebs_volume_type}</p>",
+            "EOF",
+            "",
+            "# Configure nginx to serve on port 8080 temporarily",
+            "cat > /etc/nginx/sites-available/default << 'EOF'",
+            "server {",
+            "    listen 8080 default_server;",
+            "    root /var/www/html;",
+            "    index index.html;",
+            "    location / {",
+            "        try_files $uri $uri/ =404;",
+            "    }",
+            "}",
+            "EOF",
+            "",
+            "systemctl restart nginx",
+            "systemctl enable nginx",
+            "",
+            "# Auto-register with target group (following DDEV pattern)",
+            f"INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)",
+            f"TARGET_GROUP_ARN='{self.guacamole_tg.target_group_arn}'",
+            f"aws elbv2 register-targets --target-group-arn $TARGET_GROUP_ARN --targets Id=$INSTANCE_ID,Port=8080 --region {self.region}",
+        )
+        
+        # Create the instance (NO target registration in CDK)
+        self.guacamole_instance = ec2.Instance(
+            self,
+            "GuacamoleInstance",
+            instance_type=ec2.InstanceType.of(instance_class, instance_size),
+            machine_image=machine_image,
+            vpc=self.vpc,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            security_group=self.guacamole_sg,
+            role=self.ddev_role,  # Reuse existing role that has ELB permissions
+            key_pair=ec2.KeyPair.from_key_pair_name(self, "GuacamoleKeyPair", key_name) if key_name else None,
+            user_data=user_data_script,
+            detailed_monitoring=guac_config.enable_monitoring,
+            block_devices=[
+                ec2.BlockDevice(
+                    device_name="/dev/sda1",
+                    volume=ec2.BlockDeviceVolume.ebs(
+                        volume_size=guac_config.ebs_volume_size,
+                        volume_type=volume_type,
+                        delete_on_termination=True,
+                        encrypted=False,
+                    )
+                )
+            ],
+        )
+        
+        # NO target registration here - it's done via user data script
+        # This follows the same pattern as your DDEV instance
 
     def create_outputs(self):
         """Create outputs"""

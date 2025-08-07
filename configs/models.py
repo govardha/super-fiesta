@@ -2,8 +2,6 @@
 
 from dataclasses import dataclass
 from typing import List, Optional
-
-
 @dataclass
 class VpcConfig:
     cidr: str
@@ -63,6 +61,42 @@ class WafConfig:
         if self.blocked_countries is None:
             self.blocked_countries = []
 
+
+@dataclass
+class GuacamoleConfig:
+    instance_type: str = "t3.medium"
+    instance_class: str = "BURSTABLE3"
+    instance_size: str = "MEDIUM"
+    ebs_volume_size: int = 30  # GB
+    ebs_volume_type: str = "GP3"
+    enable_monitoring: bool = True
+    # Optional: separate AMI for Guacamole if needed
+    ami_id: Optional[str] = None
+@dataclass
+class WorkstationConfig:
+    """Configuration for dev workstation instances"""
+    # Instance configuration
+    instance_class: str = "BURSTABLE3"
+    instance_size: str = "MEDIUM"
+    architecture: str = "x86_64"  # or "arm64"
+    
+    # Storage configuration
+    root_volume_size: int = 10  # GB
+    root_volume_type: str = "GP3"
+    
+    # Service ports
+    guacamole_port: int = 8080
+    vnc_port: int = 5901
+    rdp_port: int = 3389
+    
+    # Domain configuration
+    domain_pattern: str = "*.workstation.vadai.org"
+    
+    # Development tools (what to install)
+    install_vscode: bool = False
+    install_intellij: bool = False
+    install_docker: bool = True
+
 @dataclass
 class InfrastructureSpec:
     account: str
@@ -70,5 +104,7 @@ class InfrastructureSpec:
     vpc: Optional[VpcConfig] = None
     ec2: Optional[Ec2Config] = None
     logging: Optional[LoggingConfig] = None
+    guacamole: Optional[GuacamoleConfig] = None  
     endpoints: Optional[EndpointsConfig] = None
     waf: Optional[WafConfig] = None
+    workstation: Optional[WorkstationConfig] = None  

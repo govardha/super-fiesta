@@ -8,6 +8,7 @@ from stacks.super_fiesta.super_fiesta_stack import SuperFiestaStack
 from stacks.core_network.simple_network_stack import SimpleNetworkStack
 from stacks.vpc_endpoints.vpc_endpoints_stack import VpcInterfaceEndpointsStack
 from stacks.ddev_demo.ddev_demo_stack import DdevDemoStack
+from stacks.guacamole_workstation.guacamole_workstation_stack import GuacamoleWorkstationStack
 
 app = cdk.App()
 # Load configuration to get the correct account/region
@@ -49,5 +50,18 @@ DdevDemoStack(
         region=infra_config.region
     ),
 )
+
+# Guacamole Workstation Stack (uses SimpleNetwork VPC)
+guacamole_stack = GuacamoleWorkstationStack(
+    app, 
+    "GuacamoleWorkstationStack",
+    account_name="sandbox",
+    env=cdk.Environment(
+        account=infra_config.account,
+        region=infra_config.region
+    ),
+)
+
+guacamole_stack.add_dependency(simple_network)
 
 app.synth()
