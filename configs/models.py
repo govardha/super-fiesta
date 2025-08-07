@@ -45,6 +45,7 @@ class WafConfig:
     sampled_requests_enabled: bool = True
     # IP Allow List
     allowed_ips: List[str] = None
+    allowed_fqdns: List[str] = None
     # Country Blocking (ISO 3166-1 alpha-2 country codes)
     blocked_countries: List[str] = None
     # AWS Managed Rule Controls

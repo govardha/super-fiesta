@@ -457,25 +457,60 @@ class DdevDemoStack(Stack):
                 name=f"{waf_config.name}-AllowedIPs",
                 description="Allowed IP addresses - always permitted",
             )
+
+        if waf_config.allowed_fqdns and waf_config.allowed_fqdns != [""]:
             
-            # Rule to allow IPs in the allow list (highest priority)
-            rules.append(wafv2.CfnWebACL.RuleProperty(
-                name="AllowedIPsRule",
-                priority=priority,
-                statement=wafv2.CfnWebACL.StatementProperty(
-                    ip_set_reference_statement=wafv2.CfnWebACL.IPSetReferenceStatementProperty(
-                        arn=self.allowed_ip_set.attr_arn
+            if len(waf_config.allowed_fqdns) > 1:
+                # For two or more FQDNs, use an OrStatement
+                fqdn_statements = [
+                    wafv2.CfnWebACL.StatementProperty(
+                        byte_match_statement=wafv2.CfnWebACL.ByteMatchStatementProperty(
+                            field_to_match=wafv2.CfnWebACL.FieldToMatchProperty(
+                                single_header={"name": "host"}
+                            ),
+                            search_string=fqdn,
+                            text_transformations=[
+                                wafv2.CfnWebACL.TextTransformationProperty(priority=0, type="LOWERCASE")
+                            ],
+                            positional_constraint="EXACTLY",
+                        )
                     )
-                ),
+                    for fqdn in waf_config.allowed_fqdns
+                ]
+                statement_to_use = wafv2.CfnWebACL.StatementProperty(
+                    or_statement=wafv2.CfnWebACL.OrStatementProperty(
+                        statements=fqdn_statements
+                    )
+                )
+            else:
+                # For exactly one FQDN, use a single ByteMatchStatement directly
+                statement_to_use = wafv2.CfnWebACL.StatementProperty(
+                    byte_match_statement=wafv2.CfnWebACL.ByteMatchStatementProperty(
+                        field_to_match=wafv2.CfnWebACL.FieldToMatchProperty(
+                            single_header={"name": "host"}
+                        ),
+                        search_string=waf_config.allowed_fqdns[0], # Get the first (and only) item
+                        text_transformations=[
+                            wafv2.CfnWebACL.TextTransformationProperty(priority=0, type="LOWERCASE")
+                        ],
+                        positional_constraint="EXACTLY",
+                    )
+                )
+
+            # Now, append the rule with the correct statement type
+            rules.append(wafv2.CfnWebACL.RuleProperty(
+                name="AllowedFQDNRules",
+                priority=priority,
+                statement=statement_to_use,
                 action=wafv2.CfnWebACL.RuleActionProperty(allow={}),
                 visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
                     sampled_requests_enabled=waf_config.sampled_requests_enabled,
                     cloud_watch_metrics_enabled=waf_config.cloudwatch_metrics_enabled,
-                    metric_name=f"{waf_config.name}-AllowedIPs",
+                    metric_name=f"{waf_config.name}-AllowedFQDNs",
                 ),
             ))
             priority += 1
-        
+
         # Country Blocking Rule (second priority - block before other processing)
         if waf_config.blocked_countries:
             rules.append(wafv2.CfnWebACL.RuleProperty(
@@ -587,7 +622,7 @@ class DdevDemoStack(Stack):
             <p>If you believe this is an error, please contact the site administrator.</p>
             <div class="contact">
                 <div class="timestamp">Blocked at: <span id="currentTime"></span></div>
-                <div>Protected by AWS WAF • DDEV Demo Stack</div>
+                <div>Protected by AWS WAF • Guac + DDEV Demo Stack</div>
             </div>
         </div>
         <script>

@@ -63,8 +63,11 @@ globals:
       - "IR"  # Iran (optional)
     # IP Allow List (CIDR blocks)
     allowed_ips:
-      - "0.0.0.0/0"
-      ##- "24.191.74.224/32"
+      ##- "0.0.0.0/0"
+      - "73.194.145.1/32" ## bala home
+      - "24.191.74.224/32" ## gov home
+    allowed_fqdns:
+      - "home.vadai.org"
     # AWS Managed Rules (boolean controls)
     aws_common_rule_set: true       # AWS Core Rule Set
     aws_known_bad_inputs: true      # Known Bad Inputs
