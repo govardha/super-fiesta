@@ -457,7 +457,25 @@ class DdevDemoStack(Stack):
                 name=f"{waf_config.name}-AllowedIPs",
                 description="Allowed IP addresses - always permitted",
             )
-
+            
+            # Rule to allow IPs in the allow list (highest priority)
+            rules.append(wafv2.CfnWebACL.RuleProperty(
+                name="AllowedIPsRule",
+                priority=priority,
+                statement=wafv2.CfnWebACL.StatementProperty(
+                    ip_set_reference_statement=wafv2.CfnWebACL.IPSetReferenceStatementProperty(
+                        arn=self.allowed_ip_set.attr_arn
+                    )
+                ),
+                action=wafv2.CfnWebACL.RuleActionProperty(allow={}),
+                visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                    sampled_requests_enabled=waf_config.sampled_requests_enabled,
+                    cloud_watch_metrics_enabled=waf_config.cloudwatch_metrics_enabled,
+                    metric_name=f"{waf_config.name}-AllowedIPs",
+                ),
+            ))
+            priority += 1
+            
         if waf_config.allowed_fqdns and waf_config.allowed_fqdns != [""]:
             
             if len(waf_config.allowed_fqdns) > 1:
