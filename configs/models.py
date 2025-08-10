@@ -99,6 +99,15 @@ class WorkstationConfig:
     install_docker: bool = True
 
 @dataclass
+class CognitoConfig:
+    user_pool_name: str = "GuacamolePool"
+    domain_prefix: str = "guacamole-auth"
+    callback_urls: List[str] = None  # e.g., ["https://guac.webdev.vadai.org/oauth2/idpresponse"]
+    saml_provider_name: str = "Zitadel"
+    saml_metadata_url: str = "https://dev-ugeino.us1.zitadel.cloud/saml/v2/metadata"
+    attribute_mapping: dict = None  # e.g., {"email": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress", "name": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"}
+
+@dataclass
 class InfrastructureSpec:
     account: str
     region: str
@@ -108,4 +117,5 @@ class InfrastructureSpec:
     guacamole: Optional[GuacamoleConfig] = None  
     endpoints: Optional[EndpointsConfig] = None
     waf: Optional[WafConfig] = None
+    cognito: Optional[CognitoConfig] = None
     workstation: Optional[WorkstationConfig] = None  

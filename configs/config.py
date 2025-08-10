@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import yaml
 from dacite import from_dict
 
-from configs.models import InfrastructureSpec, VpcConfig, Ec2Config, LoggingConfig, EndpointsConfig, EndpointService, WafConfig, WorkstationConfig, GuacamoleConfig
+from configs.models import InfrastructureSpec, VpcConfig, Ec2Config, LoggingConfig, EndpointsConfig, EndpointService, WafConfig, WorkstationConfig, GuacamoleConfig, CognitoConfig
 from utils.converters import to_dict
 from utils.converters import update
 from utils.logger import configure_logger
@@ -130,6 +130,10 @@ class AppConfigs:
         if "workstation" in merged_config:
             workstation_config = from_dict(data_class=WorkstationConfig, data=merged_config["workstation"])
 
+        cognito_config = None
+        if "cognito" in merged_config:
+            cognito_config = from_dict(data_class=CognitoConfig, data=merged_config["cognito"])
+
         return InfrastructureSpec(
             account=merged_config["account"],
             region=merged_config["region"],
@@ -139,5 +143,6 @@ class AppConfigs:
             logging=logging_config,
             endpoints=endpoints_config,
             waf=waf_config,
+            cognito=cognito_config,
             workstation=workstation_config
         )

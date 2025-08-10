@@ -8,13 +8,14 @@ from aws_cdk import (
     aws_elasticloadbalancingv2_targets as elbv2_targets, 
     aws_certificatemanager as acm,
     aws_iam as iam,
+    aws_cognito as cognito,
     CfnOutput,
     Duration,
-)
+    RemovalPolicy
+) 
 from constructs import Construct
 from configs.config import AppConfigs
 from configs.models import InfrastructureSpec
-
 
 class DdevDemoStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, account_name: str = "sandbox", **kwargs) -> None:
@@ -47,10 +48,14 @@ class DdevDemoStack(Stack):
         self.create_guacamole_target_group()
         self.create_guacamole_listener_rule()
         self.create_guacamole_instance()
+    
+        # Add Cognito-related methods
+        self.create_cognito_user_pool()
+        self.update_guacamole_listener_rule_with_cognito()
 
-        self.add_guacamole_outputs()
-        
         # Create outputs
+        self.add_cognito_outputs()
+        self.add_guacamole_outputs()
         self.create_outputs()
 
     def create_vpc(self):
@@ -114,7 +119,20 @@ class DdevDemoStack(Stack):
             "ALBSecurityGroup",
             vpc=self.vpc,
             description="Security group for Application Load Balancer",
-            allow_all_outbound=True,
+            allow_all_outbound=False,
+        )
+
+        self.alb_sg.add_egress_rule(
+            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
+            connection=ec2.Port.tcp(443),
+            description="HTTPS to backend services",
+        )
+
+        # Example: Allow HTTP traffic to backend targets
+        self.alb_sg.add_egress_rule(
+            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
+            connection=ec2.Port.tcp(80),
+            description="HTTP to backend services"
         )
         
         self.alb_sg.add_ingress_rule(
@@ -909,9 +927,116 @@ class DdevDemoStack(Stack):
                 )
             ],
         )
+    def create_cognito_user_pool(self):
+        """Create Cognito User Pool with SAML federation for Zitadel"""
+        if not hasattr(self.infra_config, 'cognito') or not self.infra_config.cognito:
+            return None
+
+        cognito_config = self.infra_config.cognito
+
+        # Create User Pool
+        self.user_pool = cognito.UserPool(
+            self,
+            "GuacamoleUserPool",
+            user_pool_name=cognito_config.user_pool_name,
+            auto_verify=cognito.AutoVerifiedAttrs(email=True),
+            self_sign_up_enabled=False,  # Zitadel manages users
+            sign_in_aliases=cognito.SignInAliases(email=True),
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
+        # Create User Pool Domain
+        self.user_pool_domain = self.user_pool.add_domain(
+            "UserPoolDomain",
+            cognito_domain=cognito.CognitoDomainOptions(
+                domain_prefix=cognito_config.domain_prefix
+            )
+        )
+
+        # Configure SAML Identity Provider
+        self.saml_provider = cognito.UserPoolIdentityProviderSaml(
+            self,
+            "ZitadelSamlProvider",
+            user_pool=self.user_pool,
+            name=cognito_config.saml_provider_name,
+            metadata=cognito.UserPoolIdentityProviderSamlMetadata.url(cognito_config.saml_metadata_url),
+            attribute_mapping=cognito.AttributeMapping(
+                email=cognito.ProviderAttribute.other(cognito_config.attribute_mapping["email"]),
+                given_name=cognito.ProviderAttribute.other(cognito_config.attribute_mapping["name"])
+            )
+        )
         
-        # NO target registration here - it's done via user data script
-        # This follows the same pattern as your DDEV instance
+        # Create User Pool Client BEFORE adding the identity provider
+        self.user_pool_client = self.user_pool.add_client(
+            "GuacamoleClient",
+            generate_secret=True,
+            supported_identity_providers=[
+                cognito.UserPoolClientIdentityProvider.custom(cognito_config.saml_provider_name)
+            ],
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
+                callback_urls=cognito_config.callback_urls,
+                logout_urls=[f"https://guac.webdev.vadai.org/logout"]
+            ),
+            prevent_user_existence_errors=True
+        )
+
+        self.user_pool_client.node.add_dependency(self.saml_provider)
+        
+    def update_guacamole_listener_rule_with_cognito(self):
+        """Update Guacamole listener rule to include Cognito authentication"""
+        if not hasattr(self, 'user_pool') or not self.user_pool:
+            return
+
+        # Combine Cognito authentication with forwarding to target group
+        self.https_listener.add_action(
+            "GuacamoleCognitoListenerRule",
+            priority=4,  # Higher priority than existing rule (lower number)
+            conditions=[
+                elbv2.ListenerCondition.host_headers(["guac.webdev.vadai.org"])
+            ],
+            # Use authenticate_oidc instead of authenticate_cognito
+            action=elbv2.ListenerAction.authenticate_oidc(
+                authorization_endpoint=f"{self.user_pool_domain.base_url()}/oauth2/authorize",
+                token_endpoint=f"{self.user_pool_domain.base_url()}/oauth2/token",
+                user_info_endpoint=f"{self.user_pool_domain.base_url()}/oauth2/userInfo",
+                client_id=self.user_pool_client.user_pool_client_id,
+                client_secret=self.user_pool_client.user_pool_client_secret,
+                session_cookie_name="GuacamoleAuthCookie",
+                session_timeout=Duration.seconds(3600),
+                scope="openid email",
+                authentication_request_extra_params={
+                    "display": "page",
+                    "prompt": "login"
+                },
+                on_unauthenticated_request=elbv2.UnauthenticatedAction.AUTHENTICATE,
+                issuer=f"{self.user_pool_domain.base_url()}",
+                next=elbv2.ListenerAction.forward([self.guacamole_tg])
+            )
+        )
+
+    def add_cognito_outputs(self):
+        """Add Cognito-related outputs"""
+        if hasattr(self, 'user_pool') and self.user_pool:
+            CfnOutput(
+                self,
+                "CognitoUserPoolId",
+                value=self.user_pool.user_pool_id,
+                description="Cognito User Pool ID"
+            )
+            CfnOutput(
+                self,
+                "CognitoDomain",
+                value=self.user_pool_domain.domain_name,
+                description="Cognito User Pool Domain"
+            )
+            CfnOutput(
+                self,
+                "CognitoClientId",
+                value=self.user_pool_client.user_pool_client_id,
+                description="Cognito User Pool Client ID"
+            )
 
     def create_outputs(self):
         """Create outputs"""
@@ -1005,6 +1130,8 @@ class DdevDemoStack(Stack):
             waf_features = []
             if self.infra_config.waf.allowed_ips:
                 waf_features.append(f"IP Allow List ({len(self.infra_config.waf.allowed_ips)} IPs)")
+            if self.infra_config.waf.allowed_fqdns:
+                waf_features.append(f"FQDN Allow List ({len(self.infra_config.waf.allowed_fqdns)} FQDNs)")
             if self.infra_config.waf.aws_common_rule_set:
                 waf_features.append("Common Rules")
             if self.infra_config.waf.aws_sql_injection:
@@ -1024,7 +1151,7 @@ class DdevDemoStack(Stack):
             CfnOutput(
                 self,
                 "WAFDefaultAction",
-                value="BLOCK (IP whitelist mode)" if self.infra_config.waf.allowed_ips else "ALLOW (managed rules mode)",
+                value="BLOCK (IP allow-list mode)" if self.infra_config.waf.allowed_ips else "ALLOW (managed rules mode)",
                 description="WAF default action behavior",
             )
         else:

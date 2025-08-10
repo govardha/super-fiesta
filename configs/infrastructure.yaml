@@ -45,6 +45,17 @@ globals:
     install_vscode: true
     install_intellij: false
     install_docker: true  # Already in AMI
+    
+  cognito:  
+    user_pool_name: GuacamolePool
+    domain_prefix: guacamole-auth
+    callback_urls:
+      - https://guac.webdev.vadai.org/oauth2/idpresponse
+    saml_provider_name: Zitadel
+    saml_metadata_url: https://dev-ugeino.us1.zitadel.cloud/saml/v2/metadata
+    attribute_mapping:
+      email: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress
+      name: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name
   
   logging:
     flow_logs_group_name: "/aws/vpc/flowlogs"
