@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_elasticloadbalancingv2 as elbv2,
     aws_elasticloadbalancingv2_targets as elbv2_targets, 
     aws_certificatemanager as acm,
+    aws_elasticloadbalancingv2_actions as elbv2_actions,
     aws_iam as iam,
     aws_cognito as cognito,
     CfnOutput,
@@ -46,7 +47,7 @@ class DdevDemoStack(Stack):
         # Add after self.create_target_groups()
         self.create_guacamole_security_group() 
         self.create_guacamole_target_group()
-        self.create_guacamole_listener_rule()
+        ##self.create_guacamole_listener_rule()
         self.create_guacamole_instance()
     
         # Add Cognito-related methods
@@ -133,6 +134,12 @@ class DdevDemoStack(Stack):
             peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
             connection=ec2.Port.tcp(80),
             description="HTTP to backend services"
+        )
+
+        self.alb_sg.add_egress_rule(
+            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
+            connection=ec2.Port.tcp(8080),
+            description="ALB to Guac services"
         )
         
         self.alb_sg.add_ingress_rule(
@@ -785,8 +792,6 @@ class DdevDemoStack(Stack):
             action=elbv2.ListenerAction.forward([self.guacamole_tg])
     )
 
-
-    
     def add_guacamole_outputs(self):
         """Add outputs for Guacamole resources"""
         
@@ -927,8 +932,9 @@ class DdevDemoStack(Stack):
                 )
             ],
         )
+
     def create_cognito_user_pool(self):
-        """Create Cognito User Pool with SAML federation for Zitadel"""
+        """Create Cognito User Pool with OIDC federation for Zitadel"""
         if not hasattr(self.infra_config, 'cognito') or not self.infra_config.cognito:
             return None
 
@@ -953,17 +959,21 @@ class DdevDemoStack(Stack):
             )
         )
 
-        # Configure SAML Identity Provider
-        self.saml_provider = cognito.UserPoolIdentityProviderSaml(
+        self.oidc_provider = cognito.UserPoolIdentityProviderOidc(
             self,
-            "ZitadelSamlProvider",
+            "ZitadelOidcProvider",
             user_pool=self.user_pool,
-            name=cognito_config.saml_provider_name,
-            metadata=cognito.UserPoolIdentityProviderSamlMetadata.url(cognito_config.saml_metadata_url),
+            name="ZitadelOidc", # A new name for the OIDC provider
+            client_id=cognito_config.oidc_client_id, # Must be added to config
+            client_secret=cognito_config.oidc_client_secret, # Must be added to config
+            issuer_url=cognito_config.oidc_issuer_url, # Must be added to config
             attribute_mapping=cognito.AttributeMapping(
-                email=cognito.ProviderAttribute.other(cognito_config.attribute_mapping["email"]),
-                given_name=cognito.ProviderAttribute.other(cognito_config.attribute_mapping["name"])
-            )
+                email=cognito.ProviderAttribute.other("email"),
+                given_name=cognito.ProviderAttribute.other("given_name"),
+                family_name=cognito.ProviderAttribute.other("family_name"),
+                preferred_username=cognito.ProviderAttribute.other("email")
+            ),
+            scopes=["openid", "profile", "email"]
         )
         
         # Create User Pool Client BEFORE adding the identity provider
@@ -971,48 +981,61 @@ class DdevDemoStack(Stack):
             "GuacamoleClient",
             generate_secret=True,
             supported_identity_providers=[
-                cognito.UserPoolClientIdentityProvider.custom(cognito_config.saml_provider_name)
+                cognito.UserPoolClientIdentityProvider.custom("ZitadelOidc")
             ],
             o_auth=cognito.OAuthSettings(
                 flows=cognito.OAuthFlows(authorization_code_grant=True),
                 scopes=[cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
                 callback_urls=cognito_config.callback_urls,
-                logout_urls=[f"https://guac.webdev.vadai.org/logout"]
+                logout_urls=cognito_config.logout_urls
             ),
             prevent_user_existence_errors=True
         )
 
-        self.user_pool_client.node.add_dependency(self.saml_provider)
+        self.user_pool_client.node.add_dependency(self.oidc_provider)
         
     def update_guacamole_listener_rule_with_cognito(self):
         """Update Guacamole listener rule to include Cognito authentication"""
         if not hasattr(self, 'user_pool') or not self.user_pool:
             return
 
+        cognito_domain_url = f"https://{self.user_pool_domain.domain_name}.auth.{self.region}.amazoncognito.com"
+
         # Combine Cognito authentication with forwarding to target group
         self.https_listener.add_action(
             "GuacamoleCognitoListenerRule",
-            priority=4,  # Higher priority than existing rule (lower number)
+            priority=5,  # Higher priority than existing rule (lower number)
             conditions=[
-                elbv2.ListenerCondition.host_headers(["guac.webdev.vadai.org"])
+                elbv2.ListenerCondition.host_headers(["guac.webdev.vadai.org"]),
+                ##elbv2.ListenerCondition.path_patterns(["/guacamole/*"]) 
             ],
-            # Use authenticate_oidc instead of authenticate_cognito
-            action=elbv2.ListenerAction.authenticate_oidc(
-                authorization_endpoint=f"{self.user_pool_domain.base_url()}/oauth2/authorize",
-                token_endpoint=f"{self.user_pool_domain.base_url()}/oauth2/token",
-                user_info_endpoint=f"{self.user_pool_domain.base_url()}/oauth2/userInfo",
-                client_id=self.user_pool_client.user_pool_client_id,
-                client_secret=self.user_pool_client.user_pool_client_secret,
+             action=elbv2_actions.AuthenticateCognitoAction(
+                user_pool=self.user_pool,
+                user_pool_client=self.user_pool_client,
+                user_pool_domain=self.user_pool_domain,
                 session_cookie_name="GuacamoleAuthCookie",
                 session_timeout=Duration.seconds(3600),
                 scope="openid email",
-                authentication_request_extra_params={
-                    "display": "page",
-                    "prompt": "login"
-                },
                 on_unauthenticated_request=elbv2.UnauthenticatedAction.AUTHENTICATE,
-                issuer=f"{self.user_pool_domain.base_url()}",
                 next=elbv2.ListenerAction.forward([self.guacamole_tg])
+            )
+        )
+
+        # Add a redirect rule for root path to /guacamole/
+        self.https_listener.add_action(
+            "GuacamoleRootRedirect",
+            priority=6,  # Lower priority (higher number)
+            conditions=[
+                elbv2.ListenerCondition.host_headers(["guac.webdev.vadai.org"]),
+                elbv2.ListenerCondition.path_patterns(["/"])
+            ],
+            action=elbv2.ListenerAction.redirect(
+                host="#{host}",
+                path="/guacamole/",
+                port="#{port}",
+                protocol="#{protocol}",
+                query="#{query}"
+                # Remove status_code parameter - it's not supported
             )
         )
 

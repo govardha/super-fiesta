@@ -1,0 +1,51 @@
+services:
+  guacamole-db:
+    image: mysql:8.0
+    container_name: guacamole-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: guacamole_root_password
+      MYSQL_DATABASE: guacamole_db
+      MYSQL_USER: guacamole_user
+      MYSQL_PASSWORD: guacamole_password
+    volumes:
+      - guacamole-db-data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - guacamole-network
+  guacamole-daemon:
+    image: guacamole/guacd:latest
+    container_name: guacamole-daemon
+    restart: unless-stopped
+    networks:
+      - guacamole-network
+  guacamole:
+    image: guacamole/guacamole:latest
+    container_name: guacamole-app
+    ports:
+      - "8080:8080"
+    environment:
+      # Database configuration
+      GUACD_HOSTNAME: guacamole-daemon
+      MYSQL_HOSTNAME: guacamole-db
+      MYSQL_DATABASE: guacamole_db
+      MYSQL_USER: guacamole_user
+      MYSQL_PASSWORD: guacamole_password
+      HEADER_ENABLED: "true"
+      HTTP_AUTH_HEADER: "x-amzn-oidc-identity"
+      HTTP_AUTH_HEADER_TYPE: "jwt"
+      HTTP_AUTH_JSON_USERNAME_CLAIM: "email"
+      MYSQL_AUTO_CREATE_ACCOUNTS: "true"
+      MYSQL_USER_REQUIRED: "false"
+    volumes:
+      - ./extensions:/guacamole/extensions
+    depends_on:
+      - guacamole-db
+      - guacamole-daemon
+    restart: unless-stopped
+    networks:
+      - guacamole-network
+volumes:
+  guacamole-db-data:
+networks:
+  guacamole-network:
+    driver: bridge

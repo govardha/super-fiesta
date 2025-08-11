@@ -51,11 +51,21 @@ globals:
     domain_prefix: guacamole-auth
     callback_urls:
       - https://guac.webdev.vadai.org/oauth2/idpresponse
+    logout_urls:
+      - https://guac.webdev.vadai.org/guacamole/
     saml_provider_name: Zitadel
     saml_metadata_url: https://dev-ugeino.us1.zitadel.cloud/saml/v2/metadata
     attribute_mapping:
       email: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress
       name: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name
+    oidc_provider_name: ZitadelOidc
+    oidc_client_id: "${ZITADEL_OIDC_CLIENT_ID}"      # Reference environment variable
+    oidc_client_secret: "${ZITADEL_OIDC_CLIENT_SECRET}"  # Reference environment variable
+    oidc_issuer_url: "https://dev-ugeino.us1.zitadel.cloud"
+    attribute_mapping:
+      email: email
+      given_name: given_name
+      family_name: family_name
   
   logging:
     flow_logs_group_name: "/aws/vpc/flowlogs"

@@ -102,10 +102,15 @@ class WorkstationConfig:
 class CognitoConfig:
     user_pool_name: str = "GuacamolePool"
     domain_prefix: str = "guacamole-auth"
-    callback_urls: List[str] = None  # e.g., ["https://guac.webdev.vadai.org/oauth2/idpresponse"]
+    callback_urls: List[str] = None  
+    logout_urls: List[str] = None
     saml_provider_name: str = "Zitadel"
     saml_metadata_url: str = "https://dev-ugeino.us1.zitadel.cloud/saml/v2/metadata"
-    attribute_mapping: dict = None  # e.g., {"email": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress", "name": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"}
+    oidc_provider_name: str = "ZitadelOidc"
+    oidc_client_id: Optional[str] = None
+    oidc_client_secret: Optional[str] = None
+    oidc_issuer_url: Optional[str] = None
+    attribute_mapping: dict = None
 
 @dataclass
 class InfrastructureSpec:
