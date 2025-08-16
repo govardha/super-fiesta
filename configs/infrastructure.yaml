@@ -22,7 +22,7 @@ globals:
     instance_type: "t3.medium"
     instance_class: "BURSTABLE3"
     instance_size: "MEDIUM"
-    ebs_volume_size: 10
+    ebs_volume_size: 20
     ebs_volume_type: "GP3"
     enable_monitoring: true
     ami_id: "ami-0e86e20dae9224db8"
@@ -81,12 +81,14 @@ globals:
       - "RU"  # Russia
       - "CN"  # China  
       - "KP"  # North Korea
-      - "IR"  # Iran (optional)
+      - "IR"  # Iran 
     # IP Allow List (CIDR blocks)
     allowed_ips:
       ##- "0.0.0.0/0"
       - "73.194.145.1/32" ## bala home
       - "24.191.74.224/32" ## gov home
+      - "99.225.233.27/32" ## ilya home
+      
     allowed_fqdns:
       - "home.vadai.org"
     # AWS Managed Rules (boolean controls)
