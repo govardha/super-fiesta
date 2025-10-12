@@ -6,7 +6,7 @@ globals:
     enable_dns_hostnames: true
     enable_dns_support: true
     nat_gateways: 0
-  
+
   ec2:
     instance_type: "t3.micro"
     instance_class: "BURSTABLE2"
@@ -15,9 +15,29 @@ globals:
     virtualization: "HVM"
     storage: "GENERAL_PURPOSE"
     key_name: "govardha-ddev-demo"
-    # Optional: specific AMI override
-    ami_id: "ami-0e86e20dae9224db8"  # Ubuntu 24.04 us-east-1
-  
+    ami_id: "ami-0e86e20dae9224db8" 
+
+  compute:
+    almalinux_amis:
+      us-east-1:
+        "8": "ami-0825c833650fed842" # AlmaLinux OS 8.10 x86_64
+        "9": "ami-0103658bbcfb80f69" # AlmaLinux OS 9.6 x86_64
+
+    instances:
+      - name: "compute-01"
+        instance_type: "t3.medium" # Specify EC2 instance type directly
+        ebs_volume_size: 100 # GB
+        ebs_volume_type: "GP3" # GP3, GP2, IO1, IO2, etc.
+        ebs_iops: 3000 # Only for GP3, IO1, IO2
+        ebs_throughput: 125 # Only for GP3 (MiB/s)
+        os: "almalinux" # almalinux, ubuntu, amazonlinux2
+        os_version: "9" # 8 or 9 for AlmaLinux
+        enable_ssh: false # No SSH key pair
+        enable_ssm: true # SSM for access
+        enable_tailscale: true # Install Tailscale
+        subnet_type: "PRIVATE_WITH_EGRESS" # or PUBLIC
+        tailscale_auth_key_env: "TAILSCALE_AUTH_KEY" # Env var name for auth key
+
   logging:
     flow_logs_group_name: "/aws/vpc/flowlogs"
     retention_days: 2
@@ -29,21 +49,21 @@ globals:
     cloudwatch_metrics_enabled: true
     sampled_requests_enabled: true
     blocked_countries:
-      - "RU"  # Russia
-      - "CN"  # China  
-      - "KP"  # North Korea
-      - "IR"  # Iran (optional)
+      - "RU" # Russia
+      - "CN" # China
+      - "KP" # North Korea
+      - "IR" # Iran (optional)
     # IP Allow List (CIDR blocks)
     allowed_ips:
       - "0.0.0.0/0"
     # AWS Managed Rules (boolean controls)
-    aws_common_rule_set: true       # AWS Core Rule Set
-    aws_known_bad_inputs: true      # Known Bad Inputs
-    aws_sql_injection: true         # SQL Injection Protection
-    aws_xss_protection: true        # XSS Protection
-    aws_rate_limiting: false        # Rate limiting (can be expensive)
-    rate_limit_requests: 500       # Requests per 5 minutes if rate limiting enabled
-    
+    aws_common_rule_set: true # AWS Core Rule Set
+    aws_known_bad_inputs: true # Known Bad Inputs
+    aws_sql_injection: true # SQL Injection Protection
+    aws_xss_protection: true # XSS Protection
+    aws_rate_limiting: false # Rate limiting (can be expensive)
+    rate_limit_requests: 500 # Requests per 5 minutes if rate limiting enabled
+
   endpoints:
     services:
       - name: "ssm"
@@ -61,16 +81,16 @@ globals:
 
 accounts:
   - name: sandbox
-    account: "${SANDBOX_ACCOUNT_ID}"    # Environment variable
-    region: "${SANDBOX_REGION}"         # Environment variable
+    account: "${SANDBOX_ACCOUNT_ID}" # Environment variable
+    region: "${SANDBOX_REGION}" # Environment variable
     vpc:
       cidr: "10.1.0.0/16"
     ec2:
       instance_type: "t3.micro"
-  
+
   - name: production
-    account: "${PRODUCTION_ACCOUNT_ID}"  # Environment variable
-    region: "${PRODUCTION_REGION}"       # Environment variable
+    account: "${PRODUCTION_ACCOUNT_ID}" # Environment variable
+    region: "${PRODUCTION_REGION}" # Environment variable
     vpc:
       cidr: "10.2.0.0/16"
       max_azs: 3
@@ -80,10 +100,10 @@ accounts:
       instance_size: "SMALL"
     logging:
       retention_days: 30
-      
+
   - name: development
-    account: "${DEV_ACCOUNT_ID}"         # Environment variable
-    region: "${DEV_REGION}"              # Environment variable
+    account: "${DEV_ACCOUNT_ID}" # Environment variable
+    region: "${DEV_REGION}" # Environment variable
     vpc:
       cidr: "10.3.0.0/16"
     ec2:

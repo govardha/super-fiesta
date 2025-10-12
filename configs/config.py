@@ -8,7 +8,13 @@ from dotenv import load_dotenv
 import yaml
 from dacite import from_dict
 
-from configs.models import InfrastructureSpec, VpcConfig, Ec2Config, LoggingConfig, EndpointsConfig, EndpointService, WafConfig
+from configs.models import (
+    InfrastructureSpec, VpcConfig, 
+    Ec2Config, LoggingConfig, 
+    EndpointsConfig, EndpointService, 
+    WafConfig, ComputeConfig, ComputeInstanceConfig
+)
+
 from utils.converters import to_dict
 from utils.converters import update
 from utils.logger import configure_logger
@@ -122,12 +128,34 @@ class AppConfigs:
             waf_data = merged_config["waf"]
             waf_config = from_dict(data_class=WafConfig, data=waf_data)
 
+
+        compute_config = None
+
+        if "compute" in merged_config:
+            compute_data = merged_config["compute"]
+
+            # Parse instances
+            instances_data = compute_data.get("instances", [])
+            compute_instances = [
+                from_dict(data_class=ComputeInstanceConfig, data=instance)
+                for instance in instances_data
+            ]
+            
+            # Get AlmaLinux AMI mappings
+            almalinux_amis = compute_data.get("almalinux_amis", {})
+            
+            compute_config = ComputeConfig(
+                instances=compute_instances,
+                almalinux_amis=almalinux_amis
+            )
+
         return InfrastructureSpec(
             account=merged_config["account"],
             region=merged_config["region"],
             vpc=vpc_config,
             ec2=ec2_config,
+            compute=compute_config,
             logging=logging_config,
             endpoints=endpoints_config,
-            waf=waf_config
+            waf=waf_config,
         )
