@@ -41,7 +41,10 @@ class ComputeInstanceConfig:
     use_spot: bool = False
     spot_max_price: str | None = None
     spot_interruption_behavior: str = "terminate"
-
+    data_volume_size: int | None = None  # GB for separate data volume
+    data_volume_type: str = "GP3"
+    data_volume_mount_point: str = "/data"
+    data_volume_device_name: str = "/dev/sdf"
 
 @dataclass
 class ComputeConfig:

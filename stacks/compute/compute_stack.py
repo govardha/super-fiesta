@@ -13,6 +13,7 @@ from aws_cdk import (
 from aws_cdk import (
     aws_iam as iam,
 )
+from cdk_ec2_spot_simple import SpotInstance
 
 from configs.config import AppConfigs
 from configs.models import ComputeInstanceConfig, InfrastructureSpec
@@ -26,6 +27,8 @@ class ComputeStack(Stack):
     - Creates AlmaLinux instances with customizable specs
     - SSM-only access (no SSH)
     - Configurable EBS volumes
+    - Persistent data volumes
+    - Spot instance support
     """
 
     def __init__(
@@ -56,25 +59,6 @@ class ComputeStack(Stack):
         # Create outputs
         self.create_outputs()
 
-    def import_vpc(self):
-        """Import VPC from SimpleNetwork stack using cross-stack references"""
-
-        vpc_id = Fn.import_value(f"{self.network_stack_name}-{self.account_name}-VpcId")
-        vpc_cidr = Fn.import_value(
-            f"{self.network_stack_name}-{self.account_name}-VpcCidr"
-        )
-
-        # For subnet selection, we'll just use the VPC's default subnet selection
-        # This is simpler and avoids token issues
-        self.vpc = ec2.Vpc.from_vpc_attributes(
-            self,
-            "ImportedVpc",
-            vpc_id=vpc_id,
-            availability_zones=["us-east-1a", "us-east-1b"],  # Hardcode for now
-        )
-
-        self.vpc_cidr = vpc_cidr
-
     def create_compute_instances(self):
         """Create compute instances based on configuration"""
 
@@ -84,7 +68,7 @@ class ComputeStack(Stack):
             instance = self.create_single_instance(instance_config)
             self.instances.append(instance)
 
-    def create_single_instance(self, config: ComputeInstanceConfig) -> ec2.Instance:
+    def create_single_instance(self, config: ComputeInstanceConfig):
         """Create a single compute instance"""
 
         # Get AMI based on OS configuration
@@ -152,49 +136,78 @@ class ComputeStack(Stack):
         # Parse instance type directly (no abstraction)
         instance_type = ec2.InstanceType(config.instance_type)
 
-        # EBS volume configuration
-        block_device_config = {
-            "device_name": "/dev/sda1",  # Standard for most Linux AMIs
-            "volume": ec2.BlockDeviceVolume.ebs(
-                volume_size=config.ebs_volume_size,
-                volume_type=self.get_ebs_volume_type(config.ebs_volume_type),
-                delete_on_termination=True,
-                encrypted=True,
-            ),
-        }
+        # Root EBS volume configuration (for OS)
+        block_devices = [
+            ec2.BlockDevice(
+                device_name="/dev/sda1",  # Root device
+                volume=ec2.BlockDeviceVolume.ebs(
+                    volume_size=config.ebs_volume_size,
+                    volume_type=self.get_ebs_volume_type(config.ebs_volume_type),
+                    delete_on_termination=True,
+                    encrypted=True,
+                    iops=config.ebs_iops if config.ebs_iops else None,
+                    throughput=config.ebs_throughput
+                    if config.ebs_volume_type == "GP3" and config.ebs_throughput
+                    else None,
+                ),
+            )
+        ]
 
-        # Add IOPS if specified (for GP3, IO1, IO2)
-        if config.ebs_iops and config.ebs_volume_type in ["GP3", "IO1", "IO2"]:
-            block_device_config["volume"] = ec2.BlockDeviceVolume.ebs(
-                volume_size=config.ebs_volume_size,
-                volume_type=self.get_ebs_volume_type(config.ebs_volume_type),
-                iops=config.ebs_iops,
-                throughput=config.ebs_throughput
-                if config.ebs_volume_type == "GP3"
-                else None,
-                delete_on_termination=True,
-                encrypted=True,
+        # Add separate data volume if configured
+        if config.data_volume_size:
+            block_devices.append(
+                ec2.BlockDevice(
+                    device_name=config.data_volume_device_name,
+                    volume=ec2.BlockDeviceVolume.ebs(
+                        volume_size=config.data_volume_size,
+                        volume_type=self.get_ebs_volume_type(config.data_volume_type),
+                        delete_on_termination=False,  # Persist data volume
+                        encrypted=True,
+                    ),
+                )
             )
 
-        # Create instance
-        instance = ec2.Instance(
-            self,
-            config.name,
-            instance_name=config.name,
-            instance_type=instance_type,
-            machine_image=machine_image,
-            vpc=self.vpc,
-            vpc_subnets=subnet_selection,
-            security_group=sg,
-            role=role,
-            user_data=user_data_script,
-            block_devices=[ec2.BlockDevice(**block_device_config)],
-        )
+        # Create instance based on spot or on-demand
+        if config.use_spot:
+            # Build spot options
+            spot_options = {}
+            if config.spot_max_price:
+                spot_options["maxPrice"] = float(config.spot_max_price)
+
+            # Use SpotInstance construct for spot instances
+            instance = SpotInstance(
+                self,
+                config.name,
+                instance_type=instance_type,
+                machine_image=machine_image,
+                vpc=self.vpc,
+                vpc_subnets=subnet_selection,
+                security_group=sg,
+                role=role,
+                user_data=user_data_script,
+                block_devices=block_devices,
+                spot_options=spot_options if spot_options else None,
+            )
+        else:
+            # Regular on-demand instance
+            instance = ec2.Instance(
+                self,
+                config.name,
+                instance_name=config.name,
+                instance_type=instance_type,
+                machine_image=machine_image,
+                vpc=self.vpc,
+                vpc_subnets=subnet_selection,
+                security_group=sg,
+                role=role,
+                user_data=user_data_script,
+                block_devices=block_devices,
+            )
 
         return instance
 
     def create_user_data_script(self, config: ComputeInstanceConfig) -> ec2.UserData:
-        """Create minimal user data script - just basics, no Tailscale"""
+        """Create minimal user data script - just basics"""
 
         user_data = ec2.UserData.for_linux()
 
@@ -213,41 +226,127 @@ class ComputeStack(Stack):
             "systemctl enable amazon-ssm-agent || true",
             "systemctl start amazon-ssm-agent || true",
             "",
-            "# Create README",
-            "cat > /root/README.md << 'EOF'",
-            f"# {config.name} - AlmaLinux {config.os_version}",
-            "",
-            "## Instance Details:",
-            f"- Instance Type: {config.instance_type}",
-            f"- OS: AlmaLinux {config.os_version} x86_64",
-            f"- EBS Volume: {config.ebs_volume_size}GB {config.ebs_volume_type}",
-            f"- Subnet: {config.subnet_type}",
-            "",
-            "## Access:",
-            "- SSM: aws ssm start-session --target $(ec2-metadata --instance-id | cut -d' ' -f2)",
-            "",
-            "## Networking:",
-            "- Uses SimpleNetwork VPC with fck-nat for internet access",
-            "- Cost-effective NAT (~$3/month vs $45/month for AWS NAT Gateway)",
-            "",
-            "## Verification:",
-            "```bash",
-            "# Check internet connectivity",
-            "curl -s http://checkip.amazonaws.com/",
-            "",
-            "# Check SSM agent status",
-            "systemctl status amazon-ssm-agent",
-            "",
-            "# Check disk space",
-            "df -h /",
-            "",
-            "# Check OS info",
-            "cat /etc/os-release",
-            "```",
-            "EOF",
-            "",
-            "chmod 644 /root/README.md",
         ]
+
+        # Add data volume mounting if configured
+        if config.data_volume_size:
+            commands.extend(
+                [
+                    "# Mount data volume",
+                    f"DEVICE={config.data_volume_device_name}",
+                    f"MOUNT_POINT={config.data_volume_mount_point}",
+                    "",
+                    "# Wait for device to be available",
+                    "while [ ! -e $DEVICE ]; do sleep 1; done",
+                    "",
+                    "# Check if filesystem exists, if not create it",
+                    "if ! blkid $DEVICE; then",
+                    "  echo 'Creating filesystem on data volume...'",
+                    "  mkfs -t xfs $DEVICE",
+                    "fi",
+                    "",
+                    "# Create mount point",
+                    "mkdir -p $MOUNT_POINT",
+                    "",
+                    "# Get UUID of the device",
+                    "UUID=$(blkid -s UUID -o value $DEVICE)",
+                    "",
+                    "# Add to fstab if not already there",
+                    "if ! grep -q $UUID /etc/fstab; then",
+                    '  echo "UUID=$UUID $MOUNT_POINT xfs defaults,nofail 0 2" >> /etc/fstab',
+                    "fi",
+                    "",
+                    "# Mount the volume",
+                    "mount -a",
+                    "",
+                    "# Set permissions",
+                    "chmod 755 $MOUNT_POINT",
+                    "",
+                ]
+            )
+
+        commands.extend(
+            [
+                "# Create README",
+                "cat > /root/README.md << 'EOF'",
+                f"# {config.name} - AlmaLinux {config.os_version}",
+                "",
+                "## Instance Details:",
+                f"- Instance Type: {config.instance_type}",
+                f"- OS: AlmaLinux {config.os_version} x86_64",
+                f"- Root Volume: {config.ebs_volume_size}GB {config.ebs_volume_type}",
+            ]
+        )
+
+        if config.data_volume_size:
+            commands.extend(
+                [
+                    f"- Data Volume: {config.data_volume_size}GB {config.data_volume_type} (mounted at {config.data_volume_mount_point})",
+                    f"- Data Persistence: YES - survives instance replacement",
+                ]
+            )
+
+        commands.extend(
+            [
+                f"- Subnet: {config.subnet_type}",
+                f"- Spot Instance: {'Yes' if config.use_spot else 'No'}",
+                "",
+                "## Access:",
+                "- SSM: aws ssm start-session --target $(ec2-metadata --instance-id | cut -d' ' -f2)",
+                "",
+            ]
+        )
+
+        if config.data_volume_size:
+            commands.extend(
+                [
+                    "## Data Volume:",
+                    f"- Mounted at: {config.data_volume_mount_point}",
+                    f"- Store your persistent data here (survives instance replacement)",
+                    "- Check usage: df -h",
+                    "",
+                ]
+            )
+
+        commands.extend(
+            [
+                "## Networking:",
+                "- Uses SimpleNetwork VPC with fck-nat for internet access",
+                "- Cost-effective NAT (~$3/month vs $45/month for AWS NAT Gateway)",
+                "",
+                "## Verification:",
+                "```bash",
+                "# Check internet connectivity",
+                "curl -s http://checkip.amazonaws.com/",
+                "",
+                "# Check SSM agent status",
+                "systemctl status amazon-ssm-agent",
+                "",
+                "# Check disk space",
+                "df -h",
+                "",
+            ]
+        )
+
+        if config.data_volume_size:
+            commands.extend(
+                [
+                    "# Check data volume",
+                    f"ls -la {config.data_volume_mount_point}",
+                    "",
+                ]
+            )
+
+        commands.extend(
+            [
+                "# Check OS info",
+                "cat /etc/os-release",
+                "```",
+                "EOF",
+                "",
+                "chmod 644 /root/README.md",
+            ]
+        )
 
         user_data.add_commands(*commands)
         return user_data
@@ -324,7 +423,7 @@ class ComputeStack(Stack):
             CfnOutput(
                 self,
                 f"{config.name}Details",
-                value=f"{config.instance_type} | {config.ebs_volume_size}GB {config.ebs_volume_type} | AlmaLinux {config.os_version}",
+                value=f"{config.instance_type} | {config.ebs_volume_size}GB {config.ebs_volume_type} | AlmaLinux {config.os_version} | {'SPOT' if config.use_spot else 'ON-DEMAND'}",
                 description=f"{config.name} configuration",
             )
 
