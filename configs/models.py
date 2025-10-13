@@ -46,6 +46,26 @@ class ComputeInstanceConfig:
     data_volume_mount_point: str = "/data"
     data_volume_device_name: str = "/dev/sdf"
 
+
+@dataclass
+class ASGConfig:
+    """Configuration for Auto Scaling Group"""
+
+    enabled: bool = False
+    primary_instance_type: str = "m5.large"
+    alternative_instance_types: list[str] = field(default_factory=list)
+    min_capacity: int = 1
+    max_capacity: int = 1
+    desired_capacity: int = 1
+    on_demand_percentage: int = 20  # 0-100, percentage of on-demand vs spot
+    health_check_grace_period: int = 300  # seconds
+    notification_email: str | None = None
+    # Automatic refresh configuration
+    enable_daily_refresh: bool = False  # Auto-refresh to optimize spot pricing
+    refresh_hour: int = 3  # UTC hour for daily refresh (0-23)
+    refresh_only_on_demand: bool = True  # Only refresh if instance is on-demand
+
+
 @dataclass
 class ComputeConfig:
     """Configuration for compute instances"""
@@ -53,7 +73,8 @@ class ComputeConfig:
     instances: list[ComputeInstanceConfig] = field(default_factory=list)
     almalinux_amis: dict[str, dict[str, str]] = field(
         default_factory=dict
-    )  # region -> version -> ami_id
+    ) 
+    asg: ASGConfig | None = None
 
 
 @dataclass
@@ -100,4 +121,3 @@ class InfrastructureSpec:
     logging: LoggingConfig | None = None
     endpoints: EndpointsConfig | None = None
     waf: WafConfig | None = None
-

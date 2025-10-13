@@ -12,7 +12,8 @@ from configs.models import (
     InfrastructureSpec, VpcConfig, 
     Ec2Config, LoggingConfig, 
     EndpointsConfig, EndpointService, 
-    WafConfig, ComputeConfig, ComputeInstanceConfig
+    WafConfig, ComputeConfig, ComputeInstanceConfig,
+    ASGConfig,
 )
 
 from utils.converters import to_dict
@@ -143,10 +144,16 @@ class AppConfigs:
             
             # Get AlmaLinux AMI mappings
             almalinux_amis = compute_data.get("almalinux_amis", {})
+
+            asg_config = None
+            if "asg" in compute_data:
+                asg_data = compute_data["asg"]
+                asg_config = from_dict(data_class=ASGConfig, data=asg_data)
             
             compute_config = ComputeConfig(
                 instances=compute_instances,
-                almalinux_amis=almalinux_amis
+                almalinux_amis=almalinux_amis,
+                asg_config=asg_config,
             )
 
         return InfrastructureSpec(
