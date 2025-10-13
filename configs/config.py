@@ -3,27 +3,30 @@
 import os
 import string
 from pathlib import Path
-from dotenv import load_dotenv
 
 import yaml
 from dacite import from_dict
+from dotenv import load_dotenv
 
 from configs.models import (
-    InfrastructureSpec, VpcConfig, 
-    Ec2Config, LoggingConfig, 
-    EndpointsConfig, EndpointService, 
-    WafConfig, ComputeConfig, ComputeInstanceConfig,
     ASGConfig,
+    ComputeConfig,
+    ComputeInstanceConfig,
+    Ec2Config,
+    EndpointsConfig,
+    EndpointService,
+    InfrastructureSpec,
+    LoggingConfig,
+    VpcConfig,
+    WafConfig,
 )
-
-from utils.converters import to_dict
-from utils.converters import update
+from utils.converters import to_dict, update
 from utils.logger import configure_logger
 
 LOGGER = configure_logger(__name__)
 
+
 class AppConfigs:
-    
     def __init__(self):
         # Load environment variables from .env file if it exists
         env_file = Path(".env")
@@ -63,16 +66,16 @@ class AppConfigs:
     def validate_required_env_vars(self, account_name: str):
         """Validate that required environment variables are set"""
         required_vars = []
-        
+
         if account_name == "sandbox":
             required_vars = ["SANDBOX_ACCOUNT_ID", "SANDBOX_REGION"]
         elif account_name == "production":
             required_vars = ["PRODUCTION_ACCOUNT_ID", "PRODUCTION_REGION"]
         elif account_name == "development":
             required_vars = ["DEV_ACCOUNT_ID", "DEV_REGION"]
-        
+
         missing_vars = [var for var in required_vars if not os.getenv(var)]
-        
+
         if missing_vars:
             raise ValueError(
                 f"Missing required environment variables for '{account_name}' environment: {missing_vars}\n"
@@ -83,7 +86,7 @@ class AppConfigs:
     def get_infrastructure_info(self, account_name: str) -> InfrastructureSpec:
         # Validate environment variables before proceeding
         self.validate_required_env_vars(account_name)
-        
+
         context = {"account": account_name}
         data_raw = self.from_yaml("configs/infrastructure.yaml", context=context)
         data: dict = to_dict(data_raw)
@@ -92,29 +95,35 @@ class AppConfigs:
         account = next((x for x in accounts if x["name"] == account_name), {})
 
         if not account:
-            raise ValueError(f"Account '{account_name}' not found in infrastructure.yaml")
+            raise ValueError(
+                f"Account '{account_name}' not found in infrastructure.yaml"
+            )
 
         # Merge global and account-specific configurations
         merged_config = update(globals_config.copy(), account)
-        
+
         # Log the account being used (without exposing the full account ID)
         account_id = merged_config.get("account", "unknown")
-        masked_account = f"***{account_id[-4:]}" if account_id != "unknown" else "unknown"
+        masked_account = (
+            f"***{account_id[-4:]}" if account_id != "unknown" else "unknown"
+        )
         LOGGER.info(f"Using account: {masked_account} for environment: {account_name}")
-        
+
         # Create configuration objects
         vpc_config = None
         if "vpc" in merged_config:
             vpc_config = from_dict(data_class=VpcConfig, data=merged_config["vpc"])
-            
+
         ec2_config = None
         if "ec2" in merged_config:
             ec2_config = from_dict(data_class=Ec2Config, data=merged_config["ec2"])
-            
+
         logging_config = None
         if "logging" in merged_config:
-            logging_config = from_dict(data_class=LoggingConfig, data=merged_config["logging"])
-            
+            logging_config = from_dict(
+                data_class=LoggingConfig, data=merged_config["logging"]
+            )
+
         endpoints_config = None
         if "endpoints" in merged_config:
             services_data = merged_config["endpoints"].get("services", [])
@@ -129,7 +138,6 @@ class AppConfigs:
             waf_data = merged_config["waf"]
             waf_config = from_dict(data_class=WafConfig, data=waf_data)
 
-
         compute_config = None
 
         if "compute" in merged_config:
@@ -141,7 +149,7 @@ class AppConfigs:
                 from_dict(data_class=ComputeInstanceConfig, data=instance)
                 for instance in instances_data
             ]
-            
+
             # Get AlmaLinux AMI mappings
             almalinux_amis = compute_data.get("almalinux_amis", {})
 
@@ -149,11 +157,11 @@ class AppConfigs:
             if "asg" in compute_data:
                 asg_data = compute_data["asg"]
                 asg_config = from_dict(data_class=ASGConfig, data=asg_data)
-            
+
             compute_config = ComputeConfig(
                 instances=compute_instances,
                 almalinux_amis=almalinux_amis,
-                asg_config=asg_config,
+                asg=asg_config,
             )
 
         return InfrastructureSpec(
