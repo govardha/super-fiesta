@@ -1,7 +1,6 @@
 # File: configs/models.py
 
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -13,6 +12,7 @@ class VpcConfig:
     enable_dns_support: bool = True
     nat_gateways: int = 0
 
+
 @dataclass
 class Ec2Config:
     instance_type: str
@@ -21,22 +21,57 @@ class Ec2Config:
     amazon_linux_edition: str = "STANDARD"
     virtualization: str = "HVM"
     storage: str = "GENERAL_PURPOSE"
-    ami_id: Optional[str] = None  # Custom AMI ID override
-    key_name: Optional[str] = None  # SSH key pair name
+    ami_id: str | None = None
+    key_name: str | None = None
+
+
+@dataclass
+class ComputeInstanceConfig:
+    """Configuration for a single compute instance - simple and minimal"""
+
+    name: str
+    instance_type: str  # Direct EC2 instance type like "t3.medium", "m5.large"
+    ebs_volume_size: int = 100  # GB
+    ebs_volume_type: str = "GP3"  # GP3, GP2, IO1, IO2, etc.
+    ebs_iops: int | None = None  # For GP3, IO1, IO2
+    ebs_throughput: int | None = None  # For GP3 only (MiB/s)
+    os: str = "almalinux"
+    os_version: str = "9"  # 8 or 9 for AlmaLinux
+    subnet_type: str = "PRIVATE_WITH_EGRESS"  # or PUBLIC
+    use_spot: bool = False
+    spot_max_price: str | None = None
+    spot_interruption_behavior: str = "terminate"
+    data_volume_size: int | None = None  # GB for separate data volume
+    data_volume_type: str = "GP3"
+    data_volume_mount_point: str = "/data"
+    data_volume_device_name: str = "/dev/sdf"
+
+@dataclass
+class ComputeConfig:
+    """Configuration for compute instances"""
+
+    instances: list[ComputeInstanceConfig] = field(default_factory=list)
+    almalinux_amis: dict[str, dict[str, str]] = field(
+        default_factory=dict
+    )  # region -> version -> ami_id
+
 
 @dataclass
 class LoggingConfig:
     flow_logs_group_name: str = "/aws/vpc/flowlogs"
     retention_days: int = 7
 
+
 @dataclass
 class EndpointService:
     name: str
     service: str
 
+
 @dataclass
 class EndpointsConfig:
-    services: List[EndpointService]
+    services: list[EndpointService]
+
 
 @dataclass
 class WafConfig:
@@ -45,30 +80,24 @@ class WafConfig:
     description: str = "WAF for DDEV Demo"
     cloudwatch_metrics_enabled: bool = True
     sampled_requests_enabled: bool = True
-    # IP Allow List
-    allowed_ips: List[str] = None
-    # Country Blocking (ISO 3166-1 alpha-2 country codes)
-    blocked_countries: List[str] = None
-    # AWS Managed Rule Controls
+    allowed_ips: list[str] = field(default_factory=list)
+    blocked_countries: list[str] = field(default_factory=list)
     aws_common_rule_set: bool = True
     aws_known_bad_inputs: bool = True
     aws_sql_injection: bool = True
-    aws_xss_protection: bool = True  # Will map to Common Rule Set
+    aws_xss_protection: bool = True
     aws_rate_limiting: bool = False
-    rate_limit_requests: int = 2000  # requests per 5 minutes
-    
-    def __post_init__(self):
-        if self.allowed_ips is None:
-            self.allowed_ips = []
-        if self.blocked_countries is None:
-            self.blocked_countries = []
+    rate_limit_requests: int = 2000
+
 
 @dataclass
 class InfrastructureSpec:
     account: str
     region: str
-    vpc: Optional[VpcConfig] = None
-    ec2: Optional[Ec2Config] = None
-    logging: Optional[LoggingConfig] = None
-    endpoints: Optional[EndpointsConfig] = None
-    waf: Optional[WafConfig] = None
+    vpc: VpcConfig | None = None
+    ec2: Ec2Config | None = None
+    compute: ComputeConfig | None = None
+    logging: LoggingConfig | None = None
+    endpoints: EndpointsConfig | None = None
+    waf: WafConfig | None = None
+
