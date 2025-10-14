@@ -315,7 +315,7 @@ class AlmaASGStack(Stack):
                 ec2.BlockDevice(
                     device_name="/dev/sda1",
                     volume=ec2.BlockDeviceVolume.ebs(
-                        volume_size=20,
+                        volume_size=50,
                         volume_type=ec2.EbsDeviceVolumeType.GP3,
                         iops=3000,
                         throughput=125,
@@ -374,7 +374,7 @@ class AlmaASGStack(Stack):
                     on_demand_base_capacity=0,
                     on_demand_percentage_above_base_capacity=asg_config.on_demand_percentage,
                     spot_allocation_strategy=autoscaling.SpotAllocationStrategy.PRICE_CAPACITY_OPTIMIZED,
-                    spot_instance_pools=len(instance_overrides),
+                    ## spot_instance_pools=len(instance_overrides),
                 ),
             ),
             # Network configuration
@@ -521,7 +521,7 @@ class AlmaASGStack(Stack):
             description="Automated refresh schedule",
         )
 
-   def create_outputs(self):
+    def create_outputs(self):
         """Create CloudFormation outputs"""
 
         asg_config = self.infra_config.compute.asg
@@ -582,4 +582,4 @@ class AlmaASGStack(Stack):
             "NotificationInfo",
             value="SNS notifications sent for: launches, terminations, spot interruptions, and failures",
             description="Notification configuration",
-        ) 
+        )

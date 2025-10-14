@@ -20,8 +20,8 @@ globals:
   compute:
     almalinux_amis:
       us-east-1:
-        "8": "ami-0825c833650fed842" # AlmaLinux OS 8.10 x86_64
-        "9": "ami-0103658bbcfb80f69" # AlmaLinux OS 9.6 x86_64
+        "8": "-0825c833650fed842" # AlmaLinux OS 8.10 x86_64
+        "9": "ami-0740ff35d67fe08c6" # AlmaLinux OS 9.6 x86_64
 
     asg:
       enabled: true
