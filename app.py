@@ -4,6 +4,7 @@ import os
 import aws_cdk as cdk
 
 from configs.config import AppConfigs
+from stacks.alma_asg.alma_asg_stack import AlmaASGStack
 from stacks.compute.compute_stack import ComputeStack
 from stacks.core_network.simple_network_stack import SimpleNetworkStack
 from stacks.ddev_demo.ddev_demo_stack import DdevDemoStack
@@ -35,6 +36,22 @@ compute_stack = ComputeStack(
 # Ensure compute stack depends on network stack
 compute_stack.add_dependency(simple_network)
 
+if (
+    infra_config.compute
+    and infra_config.compute.asg
+    and infra_config.compute.asg.enabled
+):
+    alma_asg = AlmaASGStack(
+        app,
+        "AlmaASGStack",
+        vpc=simple_network.vpc,
+        account_name="sandbox",
+        notification_email=infra_config.compute.asg.notification_email
+        or os.getenv("NOTIFICATION_EMAIL"),
+        env=cdk.Environment(account=infra_config.account, region=infra_config.region),
+    )
+    alma_asg.add_dependency(simple_network)
+
 # Original SuperFiesta Stack
 SuperFiestaStack(app, "SuperFiestaStack")
 
@@ -55,4 +72,3 @@ DdevDemoStack(
 )
 
 app.synth()
-
