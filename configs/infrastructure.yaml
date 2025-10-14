@@ -21,7 +21,7 @@ globals:
     almalinux_amis:
       us-east-1:
         "8": "-0825c833650fed842" # AlmaLinux OS 8.10 x86_64
-        "9": "ami-0740ff35d67fe08c6" # AlmaLinux OS 9.6 x86_64
+        "9": "ami-085a9166f08849956" # AlmaLinux OS 9.6 x86_64
 
     asg:
       enabled: true
