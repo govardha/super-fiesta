@@ -64,6 +64,8 @@ class ASGConfig:
     enable_daily_refresh: bool = False  # Auto-refresh to optimize spot pricing
     refresh_hour: int = 3  # UTC hour for daily refresh (0-23)
     refresh_only_on_demand: bool = True  # Only refresh if instance is on-demand
+    enable_aggressive_spot_refresh: bool = False
+    aggressive_refresh_interval_minutes: int = 15
 
 
 @dataclass
@@ -71,9 +73,7 @@ class ComputeConfig:
     """Configuration for compute instances"""
 
     instances: list[ComputeInstanceConfig] = field(default_factory=list)
-    almalinux_amis: dict[str, dict[str, str]] = field(
-        default_factory=dict
-    ) 
+    almalinux_amis: dict[str, dict[str, str]] = field(default_factory=dict)
     asg: ASGConfig | None = None
 
 
