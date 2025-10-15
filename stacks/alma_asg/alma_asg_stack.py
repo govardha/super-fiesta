@@ -513,6 +513,54 @@ class AlmaASGStack(Stack):
             targets=[targets.LambdaFunction(refresh_lambda)],
         )
 
+        # NEW: Aggressive spot refresh (if enabled)
+        if asg_config.enable_aggressive_spot_refresh:
+            aggressive_lambda = lambda_.Function(
+                self,
+                "AggressiveSpotRefreshLambda",
+                runtime=lambda_.Runtime.PYTHON_3_11,
+                handler="aggressive_refresh_handler.handler",
+                code=lambda_.Code.from_asset(lambda_dir),
+                environment={
+                    "ASG_NAME": self.asg.auto_scaling_group_name,
+                    "TOPIC_ARN": self.notification_topic.topic_arn,
+                },
+                timeout=Duration.seconds(60),
+                description=f"Aggressive spot pursuit for {self.asg.auto_scaling_group_name}",
+            )
+
+            aggressive_lambda.add_to_role_policy(
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    actions=[
+                        "autoscaling:DescribeAutoScalingGroups",
+                        "autoscaling:DescribeInstanceRefreshes",
+                        "autoscaling:StartInstanceRefresh",
+                        "ec2:DescribeInstances",
+                        "sns:Publish",
+                    ],
+                    resources=["*"],
+                )
+            )
+
+            # Run every N minutes
+            interval = asg_config.aggressive_refresh_interval_minutes
+            events.Rule(
+                self,
+                "AggressiveSpotRefreshRule",
+                rule_name=f"AlmaASG-{self.account_name}-AggressiveSpot",
+                description=f"Aggressive spot pursuit every {interval} minutes",
+                schedule=events.Schedule.rate(Duration.minutes(interval)),
+                targets=[targets.LambdaFunction(aggressive_lambda)],
+            )
+
+            CfnOutput(
+                self,
+                "AggressiveSpotRefresh",
+                value=f"Enabled - checks every {interval} minutes, 100% spot preference",
+                description="Aggressive spot pursuit status",
+            )
+
         # Output
         CfnOutput(
             self,

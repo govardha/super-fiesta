@@ -31,16 +31,20 @@ globals:
         - "m5n.large"
         - "m6i.large"
         - "m4.large"
+        - "m5d.large"
+        - "m5ad.large"
       min_capacity: 1
       max_capacity: 1
       desired_capacity: 1
-      on_demand_percentage: 20
+      on_demand_percentage: 0
       health_check_grace_period: 300
       notification_email: null
       # Automatic refresh
       enable_daily_refresh: true
       refresh_hour: 3
       refresh_only_on_demand: true
+      enable_aggressive_spot_refresh: true
+      aggressive_refresh_interval_minutes: 15
 
     instances:
       - name: "compute-01"
@@ -121,11 +125,15 @@ accounts:
           - "m5n.large"
           - "m6i.large"
           - "m4.large"
-        on_demand_percentage: 30
+          - "m5d.large"
+          - "m5ad.large"
+        on_demand_percentage: 0
         notification_email: "${NOTIFICATION_EMAIL}"
         enable_daily_refresh: true
         refresh_hour: 3
         refresh_only_on_demand: true
+        enable_aggressive_spot_refresh: true
+        aggressive_refresh_interval_minutes: 15
 
   - name: production
     account: "${PRODUCTION_ACCOUNT_ID}" # Environment variable
