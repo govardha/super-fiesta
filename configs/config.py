@@ -17,6 +17,7 @@ from configs.models import (
     EndpointService,
     InfrastructureSpec,
     LoggingConfig,
+    OpnsenseLabConfig,
     VpcConfig,
     WafConfig,
 )
@@ -164,6 +165,12 @@ class AppConfigs:
                 asg=asg_config,
             )
 
+        opnsense_lab_config = None
+        if "opnsense_lab" in merged_config:
+            opnsense_lab_config = from_dict(
+                data_class=OpnsenseLabConfig, data=merged_config["opnsense_lab"]
+            )
+
         return InfrastructureSpec(
             account=merged_config["account"],
             region=merged_config["region"],
@@ -173,4 +180,5 @@ class AppConfigs:
             logging=logging_config,
             endpoints=endpoints_config,
             waf=waf_config,
+            opnsense_lab=opnsense_lab_config,
         )

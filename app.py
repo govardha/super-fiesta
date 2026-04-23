@@ -11,7 +11,14 @@ from stacks.ddev_demo.ddev_demo_stack import DdevDemoStack
 from stacks.super_fiesta.super_fiesta_stack import SuperFiestaStack
 from stacks.vpc_endpoints.vpc_endpoints_stack import VpcInterfaceEndpointsStack
 
+from stacks.pipeline.pipeline_stack import OpnsenseLabPipelineStack
+
 app = cdk.App()
+
+# Deployment account (where pipelines live)
+deployment_account = app.node.try_get_context("deployment_account_id")
+deployment_region = app.node.try_get_context("deployment_account_region")
+sandbox_account = app.node.try_get_context("sandbox_account_id")
 
 # Load configuration to get the correct account/region
 config_loader = AppConfigs()
@@ -69,6 +76,14 @@ DdevDemoStack(
     "DdevDemoStack",
     account_name="sandbox",
     env=cdk.Environment(account=infra_config.account, region=infra_config.region),
+)
+
+# OPNsense Lab Pipeline (lives in deployment account, deploys to sandbox)
+OpnsenseLabPipelineStack(
+    app,
+    "OpnsenseLabPipeline",
+    sandbox_env=cdk.Environment(account=sandbox_account, region=deployment_region),
+    env=cdk.Environment(account=deployment_account, region=deployment_region),
 )
 
 app.synth()
