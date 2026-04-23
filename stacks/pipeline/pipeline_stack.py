@@ -2,6 +2,7 @@ from aws_cdk import (
     Stack,
     Environment,
     pipelines,
+    aws_codebuild as codebuild,
 )
 from constructs import Construct
 
@@ -37,6 +38,10 @@ class OpnsenseLabPipelineStack(Stack):
                 commands=[
                     "npx cdk synth",
                 ],
+                env={
+                    "SANDBOX_ACCOUNT_ID": sandbox_env.account,
+                    "SANDBOX_REGION": sandbox_env.region,
+                },
             ),
             cross_account_keys=True,
         )

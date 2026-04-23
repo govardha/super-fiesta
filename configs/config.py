@@ -42,7 +42,7 @@ class AppConfigs:
             t = string.Template(node.value)
             # Substitute with both context and environment variables
             combined_context = {**os.environ, **context}
-            value = t.substitute(combined_context)
+            value = t.safe_substitute(combined_context)
             return value
 
         loader = yaml.SafeLoader
