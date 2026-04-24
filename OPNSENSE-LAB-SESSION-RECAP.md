@@ -105,6 +105,7 @@ opnsense_lab:
 ```bash
 cd ~/src/super-fiesta
 git add -A
+
 git commit -m "feat: OPNsense lab pipeline and stack"
 git push -u origin feature/opnsense-lab
 ```
