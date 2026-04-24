@@ -1,11 +1,14 @@
 from constructs import Construct
 from aws_cdk import Stage, Environment
 
-from stacks.opnsense_lab.opnsense_lab_stack import OpnsenseLabStack
+from stacks.opnsense_lab.network_stack import OpnsenseLabNetworkStack
+from stacks.opnsense_lab.compute_stack import OpnsenseLabComputeStack
 
 
 class OpnsenseLabStage(Stage):
     def __init__(self, scope: Construct, construct_id: str, account_name: str = "sandbox", **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        OpnsenseLabStack(self, "OpnsenseLabStack", account_name=account_name, env=kwargs.get("env"))
+        env = kwargs.get("env")
+        network = OpnsenseLabNetworkStack(self, "OpnsenseLabNetwork", account_name=account_name, env=env)
+        OpnsenseLabComputeStack(self, "OpnsenseLabCompute", network=network, account_name=account_name, env=env)
