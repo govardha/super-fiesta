@@ -2,7 +2,7 @@ from aws_cdk import (
     Stack,
     Environment,
     pipelines,
-    aws_codebuild as codebuild,
+    aws_iam as iam,
 )
 from constructs import Construct
 
@@ -29,7 +29,7 @@ class OpnsenseLabPipelineStack(Stack):
             self,
             "OpnsenseLabPipeline",
             pipeline_name="OpnsenseLab",
-            synth=pipelines.ShellStep(
+            synth=pipelines.CodeBuildStep(
                 "Synth",
                 input=source,
                 install_commands=[
@@ -42,6 +42,12 @@ class OpnsenseLabPipelineStack(Stack):
                     "SANDBOX_ACCOUNT_ID": sandbox_env.account,
                     "SANDBOX_REGION": sandbox_env.region,
                 },
+                role_policy_statements=[
+                    iam.PolicyStatement(
+                        actions=["sts:AssumeRole"],
+                        resources=[f"arn:aws:iam::{sandbox_env.account}:role/cdk-govjuly25-*"],
+                    ),
+                ],
             ),
             cross_account_keys=True,
         )
