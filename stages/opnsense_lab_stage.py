@@ -10,5 +10,13 @@ class OpnsenseLabStage(Stage):
         super().__init__(scope, construct_id, **kwargs)
 
         env = kwargs.get("env")
-        network = OpnsenseLabNetworkStack(self, "OpnsenseLabNetwork", account_name=account_name, env=env)
-        OpnsenseLabComputeStack(self, "OpnsenseLabCompute", network=network, account_name=account_name, env=env)
+        network = OpnsenseLabNetworkStack(
+            self, "OpnsenseLabNetwork",
+            stack_name="SandboxDeploy-OpnsenseLabNetwork",
+            account_name=account_name, env=env,
+        )
+        OpnsenseLabComputeStack(
+            self, "OpnsenseLabCompute",
+            stack_name="SandboxDeploy-OpnsenseLabCompute",
+            network=network, account_name=account_name, env=env,
+        )

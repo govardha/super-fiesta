@@ -20,6 +20,7 @@ class OpnsenseLabComputeStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, network: OpnsenseLabNetworkStack,
                  account_name: str = "sandbox", **kwargs) -> None:
+        kwargs.setdefault("stack_name", "SandboxDeploy-OpnsenseLabCompute")
         super().__init__(scope, construct_id, **kwargs)
 
         config_loader = AppConfigs()
