@@ -2,8 +2,8 @@
 import aws_cdk as cdk
 
 from configs.config import AppConfigs
-from stacks.opnsense_lab.network_stack import OpnsenseLabNetworkStack
 from stacks.opnsense_lab.compute_stack import OpnsenseLabComputeStack
+from stacks.opnsense_lab.network_stack import OpnsenseLabNetworkStack
 from stacks.pipeline.pipeline_stack import OpnsenseLabPipelineStack
 
 app = cdk.App()
@@ -17,8 +17,12 @@ infra_config = config_loader.get_infrastructure_info("sandbox")
 sandbox_env = cdk.Environment(account=infra_config.account, region=infra_config.region)
 
 # Direct deploy targets — stack names match what the pipeline created
-network = OpnsenseLabNetworkStack(app, "OpnsenseLabNetwork", account_name="sandbox", env=sandbox_env)
-OpnsenseLabComputeStack(app, "OpnsenseLabCompute", network=network, account_name="sandbox", env=sandbox_env)
+network = OpnsenseLabNetworkStack(
+    app, "OpnsenseLabNetwork", account_name="sandbox", env=sandbox_env
+)
+OpnsenseLabComputeStack(
+    app, "OpnsenseLabCompute", network=network, account_name="sandbox", env=sandbox_env
+)
 
 # Pipeline (deploy separately when ready)
 OpnsenseLabPipelineStack(

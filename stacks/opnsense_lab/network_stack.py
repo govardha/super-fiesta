@@ -1,4 +1,5 @@
-from aws_cdk import Stack, aws_ec2 as ec2
+from aws_cdk import Stack
+from aws_cdk import aws_ec2 as ec2
 from constructs import Construct
 
 from configs.config import AppConfigs
@@ -12,7 +13,13 @@ class OpnsenseLabNetworkStack(Stack):
     Deployed once and shared with ComputeStack.
     """
 
-    def __init__(self, scope: Construct, construct_id: str, account_name: str = "sandbox", **kwargs) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        account_name: str = "sandbox",
+        **kwargs,
+    ) -> None:
         kwargs.setdefault("stack_name", "SandboxDeploy-OpnsenseLabNetwork")
         super().__init__(scope, construct_id, **kwargs)
 
@@ -22,14 +29,23 @@ class OpnsenseLabNetworkStack(Stack):
 
         # --- VPC: public + private isolated, 0 NAT (OPNsense IS the NAT) ---
         self.vpc = ec2.Vpc(
-            self, "OpnsenseLabVpc",
+            self,
+            "OpnsenseLabVpc",
             vpc_name=f"OpnsenseLab-{account_name}",
             ip_addresses=ec2.IpAddresses.cidr(lab.vpc.cidr),
             max_azs=1,
             nat_gateways=0,
             subnet_configuration=[
-                ec2.SubnetConfiguration(name="Public", subnet_type=ec2.SubnetType.PUBLIC, cidr_mask=lab.vpc.subnet_mask),
-                ec2.SubnetConfiguration(name="PrivateIsolated", subnet_type=ec2.SubnetType.PRIVATE_ISOLATED, cidr_mask=lab.vpc.subnet_mask),
+                ec2.SubnetConfiguration(
+                    name="Public",
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                    cidr_mask=lab.vpc.subnet_mask,
+                ),
+                ec2.SubnetConfiguration(
+                    name="PrivateIsolated",
+                    subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
+                    cidr_mask=lab.vpc.subnet_mask,
+                ),
             ],
             enable_dns_hostnames=True,
             enable_dns_support=True,
@@ -39,8 +55,16 @@ class OpnsenseLabNetworkStack(Stack):
         self.private_subnet = self.vpc.isolated_subnets[0]
 
         # --- SSM VPC endpoints (AlmaLinux needs SSM before OPNsense NAT is configured) ---
-        self.endpoint_sg = ec2.SecurityGroup(self, "EndpointSG", vpc=self.vpc, description="SSM VPC Endpoints", allow_all_outbound=False)
-        self.endpoint_sg.add_ingress_rule(ec2.Peer.ipv4(self.vpc.vpc_cidr_block), ec2.Port.tcp(443), "HTTPS from VPC")
+        self.endpoint_sg = ec2.SecurityGroup(
+            self,
+            "EndpointSG",
+            vpc=self.vpc,
+            description="SSM VPC Endpoints",
+            allow_all_outbound=False,
+        )
+        self.endpoint_sg.add_ingress_rule(
+            ec2.Peer.ipv4(self.vpc.vpc_cidr_block), ec2.Port.tcp(443), "HTTPS from VPC"
+        )
 
         for svc_name, svc in [
             ("ssm", ec2.InterfaceVpcEndpointAwsService.SSM),
@@ -48,7 +72,11 @@ class OpnsenseLabNetworkStack(Stack):
             ("ec2-messages", ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES),
         ]:
             ec2.InterfaceVpcEndpoint(
-                self, f"{svc_name}-endpoint", vpc=self.vpc, service=svc,
-                security_groups=[self.endpoint_sg], private_dns_enabled=True,
+                self,
+                f"{svc_name}-endpoint",
+                vpc=self.vpc,
+                service=svc,
+                security_groups=[self.endpoint_sg],
+                private_dns_enabled=True,
                 subnets=ec2.SubnetSelection(subnets=[self.private_subnet]),
             )
