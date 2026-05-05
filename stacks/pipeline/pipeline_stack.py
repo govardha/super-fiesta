@@ -1,7 +1,9 @@
 from aws_cdk import (
-    Stack,
     Environment,
+    Stack,
     pipelines,
+)
+from aws_cdk import (
     aws_iam as iam,
 )
 from constructs import Construct
@@ -16,7 +18,9 @@ class OpnsenseLabPipelineStack(Stack):
     This stack itself lives in the deployment account.
     """
 
-    def __init__(self, scope: Construct, construct_id: str, sandbox_env: Environment, **kwargs) -> None:
+    def __init__(
+        self, scope: Construct, construct_id: str, sandbox_env: Environment, **kwargs
+    ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         source = pipelines.CodePipelineSource.connection(
@@ -45,7 +49,9 @@ class OpnsenseLabPipelineStack(Stack):
                 role_policy_statements=[
                     iam.PolicyStatement(
                         actions=["sts:AssumeRole"],
-                        resources=[f"arn:aws:iam::{sandbox_env.account}:role/cdk-govjuly25-*"],
+                        resources=[
+                            f"arn:aws:iam::{sandbox_env.account}:role/cdk-govjuly25-*"
+                        ],
                     ),
                 ],
             ),
