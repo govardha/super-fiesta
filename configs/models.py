@@ -112,6 +112,24 @@ class WafConfig:
 
 
 @dataclass
+class OpnsenseLabVpcConfig:
+    cidr: str = "10.10.0.0/16"
+    max_azs: int = 2
+    subnet_mask: int = 24
+
+
+@dataclass
+class OpnsenseLabConfig:
+    vpc: OpnsenseLabVpcConfig = field(default_factory=OpnsenseLabVpcConfig)
+    instance_type: str = "m5.large"
+    os_version: str = "9"
+    ebs_volume_size: int = 20
+    opnsense_ami: str = ""
+    opnsense_instance_type: str = "t3.large"
+    key_pair_name: str = "opnsense-lab-key"
+
+
+@dataclass
 class InfrastructureSpec:
     account: str
     region: str
@@ -121,3 +139,4 @@ class InfrastructureSpec:
     logging: LoggingConfig | None = None
     endpoints: EndpointsConfig | None = None
     waf: WafConfig | None = None
+    opnsense_lab: OpnsenseLabConfig | None = None

@@ -108,6 +108,18 @@ globals:
       - name: "logs"
         service: "CLOUDWATCH_LOGS"
 
+  opnsense_lab:
+    vpc:
+      cidr: "10.10.0.0/16"
+      max_azs: 2
+      subnet_mask: 24
+    instance_type: "t3a.micro"
+    os_version: "9"
+    ebs_volume_size: 50
+    opnsense_ami: "ami-0c7eb0df432665ef3"
+    opnsense_instance_type: "t3a.small"
+    key_pair_name: "opnsense-lab-key"
+
 accounts:
   - name: sandbox
     account: "${SANDBOX_ACCOUNT_ID}" # Environment variable

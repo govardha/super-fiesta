@@ -1,5 +1,7 @@
 aws-cdk-lib==2.205.0
 constructs>=10.0.0,<11.0.0
 dacite
+python-dotenv
+cdk-ec2-spot-simple
 pre-commit
 ruff

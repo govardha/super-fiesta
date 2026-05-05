@@ -1,0 +1,137 @@
+<?xml version="1.0"?>
+<opnsense>
+  <theme>opnsense</theme>
+  <system>
+    <optimization>normal</optimization>
+    <hostname>OPNsense</hostname>
+    <domain>localdomain</domain>
+    <dnsallowoverride>1</dnsallowoverride>
+    <group>
+      <name>admins</name>
+      <description><![CDATA[System Administrators]]></description>
+      <scope>system</scope>
+      <gid>1999</gid>
+      <member>0</member>
+      <priv>page-all</priv>
+    </group>
+    <user>
+      <name>root</name>
+      <descr><![CDATA[System Administrator]]></descr>
+      <scope>system</scope>
+      <groupname>admins</groupname>
+      <password>$2y$10$YRVoF4SgskIsrXOvOQjGieB9XqHPRra9R7d80B3BZdbY/j21TwBfS</password>
+      <uid>0</uid>
+    </user>
+    <nextuid>2000</nextuid>
+    <nextgid>2000</nextgid>
+    <webgui>
+      <protocol>https</protocol>
+      <nohttpreferercheck>1</nohttpreferercheck>
+    </webgui>
+    <disablenatreflection>yes</disablenatreflection>
+    <usevirtualterminal>1</usevirtualterminal>
+    <disablechecksumoffloading>1</disablechecksumoffloading>
+    <disablesegmentationoffloading>1</disablesegmentationoffloading>
+    <disablelargereceiveoffloading>1</disablelargereceiveoffloading>
+    <ssh>
+      <group>admins</group>
+      <enabled>enabled</enabled>
+      <permitrootlogin>1</permitrootlogin>
+      <passwordauth>1</passwordauth>
+    </ssh>
+  </system>
+
+  <interfaces>
+    <lo0>
+      <internal_dynamic>1</internal_dynamic>
+      <descr>Loopback</descr>
+      <enable>1</enable>
+      <if>lo0</if>
+      <ipaddr>127.0.0.1</ipaddr>
+      <ipaddrv6>::1</ipaddrv6>
+      <subnet>8</subnet>
+      <subnetv6>128</subnetv6>
+      <type>none</type>
+      <virtual>1</virtual>
+    </lo0>
+    <wan>
+      <enable>1</enable>
+      <if>xn0</if>
+      <ipaddr>dhcp</ipaddr>
+      <blockpriv>0</blockpriv>
+      <blockbogons>0</blockbogons>
+    </wan>
+    <lan>
+      <enable>1</enable>
+      <if>xn1</if>
+      <ipaddr>dhcp</ipaddr>
+    </lan>
+  </interfaces>
+
+  <nat>
+    <outbound>
+      <mode>automatic</mode>
+    </outbound>
+  </nat>
+
+  <filter>
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <statetype>keep state</statetype>
+      <descr><![CDATA[Allow SSH on WAN]]></descr>
+      <protocol>tcp</protocol>
+      <source>
+        <any>1</any>
+      </source>
+      <destination>
+        <network>(self)</network>
+        <port>22</port>
+      </destination>
+    </rule>
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <statetype>keep state</statetype>
+      <descr><![CDATA[Allow HTTPS on WAN]]></descr>
+      <protocol>tcp</protocol>
+      <source>
+        <any>1</any>
+      </source>
+      <destination>
+        <network>(self)</network>
+        <port>443</port>
+      </destination>
+    </rule>
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <statetype>keep state</statetype>
+      <descr><![CDATA[Allow ICMP on WAN]]></descr>
+      <protocol>icmp</protocol>
+      <icmptype>echoreq</icmptype>
+      <source>
+        <any>1</any>
+      </source>
+      <destination>
+        <network>(self)</network>
+      </destination>
+    </rule>
+    <rule>
+      <type>pass</type>
+      <interface>lan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <statetype>keep state</statetype>
+      <descr><![CDATA[Allow all from LAN]]></descr>
+      <source>
+        <any>1</any>
+      </source>
+      <destination>
+        <any>1</any>
+      </destination>
+    </rule>
+  </filter>
+</opnsense>
