@@ -76,6 +76,14 @@ class BuildStack(Stack):
                 ],
             )
         )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ssm:GetParameter"],
+                resources=[
+                    f"arn:aws:ssm:{Stack.of(self).region}:{Stack.of(self).account}:parameter/notify/gh-pat",
+                ],
+            )
+        )
 
         # --- UserData from shared script ---
         user_data = ec2.UserData.for_linux()

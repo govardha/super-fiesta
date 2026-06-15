@@ -94,7 +94,7 @@ globals:
     rate_limit_requests: 500 # Requests per 5 minutes if rate limiting enabled
 
   build_compute:
-    x86_instance_type: "c7a.8xlarge"
+    x86_instance_type: "c7a.4xlarge"
     arm_instance_type: "c7g.8xlarge"
     ebs_volume_size: 100
     s3_bucket_arn: "arn:aws:s3:::govstuff-304232106942"
