@@ -130,6 +130,15 @@ class OpnsenseLabConfig:
 
 
 @dataclass
+class BuildComputeConfig:
+    x86_instance_type: str = "c7a.8xlarge"
+    arm_instance_type: str = "c7g.8xlarge"
+    ebs_volume_size: int = 100
+    s3_bucket_arn: str = "arn:aws:s3:::govstuff-304232106942"
+    s3_prefix: str = "python"
+
+
+@dataclass
 class InfrastructureSpec:
     account: str
     region: str
@@ -140,3 +149,4 @@ class InfrastructureSpec:
     endpoints: EndpointsConfig | None = None
     waf: WafConfig | None = None
     opnsense_lab: OpnsenseLabConfig | None = None
+    build_compute: BuildComputeConfig | None = None

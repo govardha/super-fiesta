@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from configs.models import (
     ASGConfig,
+    BuildComputeConfig,
     ComputeConfig,
     ComputeInstanceConfig,
     Ec2Config,
@@ -171,6 +172,12 @@ class AppConfigs:
                 data_class=OpnsenseLabConfig, data=merged_config["opnsense_lab"]
             )
 
+        build_compute_config = None
+        if "build_compute" in merged_config:
+            build_compute_config = from_dict(
+                data_class=BuildComputeConfig, data=merged_config["build_compute"]
+            )
+
         return InfrastructureSpec(
             account=merged_config["account"],
             region=merged_config["region"],
@@ -181,4 +188,5 @@ class AppConfigs:
             endpoints=endpoints_config,
             waf=waf_config,
             opnsense_lab=opnsense_lab_config,
+            build_compute=build_compute_config,
         )
