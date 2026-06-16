@@ -12,6 +12,8 @@ AWS CDK Python infrastructure monorepo. Configuration-driven, multi-account, mul
 | `SimpleNetwork` | Shared VPC with fck-nat (~$3/month) for compute workloads |
 | `ComputeStack` | AlmaLinux EC2 instances (spot or on-demand, configurable EBS) |
 | `AlmaASGStack` | Auto Scaling Group with aggressive spot optimization + Lambda refreshers |
+| `X86BuildStack` | Ephemeral x86 build instance (c7a.8xlarge, AL2023, Docker) |
+| `ArmBuildStack` | Ephemeral ARM build instance (c7g.8xlarge, AL2023, Docker) |
 | `VpcInterfaceEndpointsStack` | VPC Interface Endpoints demo (isolated subnets, no NAT) |
 | `DdevDemoStack` | DDEV QA environment — ALB, WAF, Ubuntu, Traefik |
 
@@ -21,7 +23,7 @@ AWS CDK Python infrastructure monorepo. Configuration-driven, multi-account, mul
 app.py
  ├── OpnsenseLabNetworkStack → OpnsenseLabComputeStack
  ├── OpnsenseLabPipelineStack (deploys network+compute via CodePipeline)
- ├── SimpleNetworkStack → ComputeStack, AlmaASGStack
+ ├── SimpleNetworkStack → ComputeStack, AlmaASGStack, X86BuildStack, ArmBuildStack
  ├── VpcInterfaceEndpointsStack (standalone)
  └── DdevDemoStack (standalone)
 ```
@@ -66,6 +68,12 @@ cdk synth
 
 # Deploy OPNsense lab (current active development)
 cdk deploy OpnsenseLabNetwork OpnsenseLabCompute
+
+# Deploy build compute (ephemeral, tear down when done)
+cdk deploy SimpleNetwork X86BuildStack ArmBuildStack
+
+# Tear down build compute
+cdk destroy X86BuildStack ArmBuildStack SimpleNetwork
 
 # Deploy pipeline (deploys to sandbox via CodePipeline)
 cdk deploy OpnsenseLabPipeline
