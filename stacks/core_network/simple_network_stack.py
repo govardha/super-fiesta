@@ -57,15 +57,12 @@ class SimpleNetworkStack(Stack):
         self.fck_nat_provider = ec2.NatInstanceProviderV2(**nat_provider_config)
         
         # Create VPC using all values from infrastructure.yaml
-        self.vpc = ec2.Vpc(
-            self,
-            "SimpleNetworkVpc",
-            vpc_name=f"SimpleNetwork-{self.account_name}",
-            ip_addresses=ec2.IpAddresses.cidr(self.infra_config.vpc.cidr),
-            max_azs=self.infra_config.vpc.max_azs,
-            nat_gateways=1,  # Single NAT for cost optimization
-            nat_gateway_provider=self.fck_nat_provider,
-            subnet_configuration=[
+        vpc_props = {
+            "vpc_name": f"SimpleNetwork-{self.account_name}",
+            "ip_addresses": ec2.IpAddresses.cidr(self.infra_config.vpc.cidr),
+            "nat_gateways": 1,
+            "nat_gateway_provider": self.fck_nat_provider,
+            "subnet_configuration": [
                 ec2.SubnetConfiguration(
                     name=f"SimpleNetwork-{self.account_name}-Public",
                     subnet_type=ec2.SubnetType.PUBLIC,
@@ -77,9 +74,16 @@ class SimpleNetworkStack(Stack):
                     cidr_mask=self.infra_config.vpc.subnet_mask,
                 ),
             ],
-            enable_dns_hostnames=self.infra_config.vpc.enable_dns_hostnames,
-            enable_dns_support=self.infra_config.vpc.enable_dns_support,
-        )
+            "enable_dns_hostnames": self.infra_config.vpc.enable_dns_hostnames,
+            "enable_dns_support": self.infra_config.vpc.enable_dns_support,
+        }
+
+        if self.infra_config.vpc.availability_zones:
+            vpc_props["availability_zones"] = self.infra_config.vpc.availability_zones
+        else:
+            vpc_props["max_azs"] = self.infra_config.vpc.max_azs
+
+        self.vpc = ec2.Vpc(self, "SimpleNetworkVpc", **vpc_props)
 
         # Fix the security group - exact same as DDEV stack
         self.fck_nat_provider.security_group.add_ingress_rule(

@@ -11,6 +11,7 @@ class VpcConfig:
     enable_dns_hostnames: bool = True
     enable_dns_support: bool = True
     nat_gateways: int = 0
+    availability_zones: list = None
 
 
 @dataclass

@@ -3,32 +3,42 @@
 # Shared by both X86BuildStack and ArmBuildStack.
 # Edit this file to add packages/tools — both stacks pick it up.
 set -euo pipefail
+exec > >(tee /var/log/build-setup.log) 2>&1
 
-dnf install -y docker docker-compose-plugin git tmux make
+echo "=== Build setup starting at $(date) ==="
+
+dnf install -y docker git tmux make
 systemctl enable --now docker
 usermod -aG docker ec2-user
 
-# docker buildx — dnf package is broken on AL2023, install from GitHub
-BUILDX_VERSION="v0.17.1"
+# docker compose plugin — install from GitHub (AL2023 repo may not have arm64)
 ARCH=$(uname -m)
 if [[ "${ARCH}" == "aarch64" ]]; then
+  COMPOSE_ARCH="aarch64"
   BUILDX_ARCH="arm64"
+  LAZYGIT_ARCH="arm64"
 else
+  COMPOSE_ARCH="x86_64"
   BUILDX_ARCH="amd64"
+  LAZYGIT_ARCH="x86_64"
 fi
+
 mkdir -p /usr/libexec/docker/cli-plugins
+
+# docker compose v2
+COMPOSE_VERSION="v2.29.7"
+curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${COMPOSE_ARCH}" \
+  -o /usr/libexec/docker/cli-plugins/docker-compose
+chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+
+# docker buildx — dnf package is broken on AL2023, install from GitHub
+BUILDX_VERSION="v0.17.1"
 curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${BUILDX_ARCH}" \
   -o /usr/libexec/docker/cli-plugins/docker-buildx
 chmod +x /usr/libexec/docker/cli-plugins/docker-buildx
 
 # lazygit
 LAZYGIT_VERSION=$(curl -s https://api.github.com/repos/jesseduffield/lazygit/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-ARCH=$(uname -m)
-if [[ "${ARCH}" == "aarch64" ]]; then
-  LAZYGIT_ARCH="arm64"
-else
-  LAZYGIT_ARCH="x86_64"
-fi
 curl -Lo /tmp/lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_${LAZYGIT_ARCH}.tar.gz"
 tar -xzf /tmp/lazygit.tar.gz -C /usr/local/bin lazygit
 rm -f /tmp/lazygit.tar.gz
@@ -46,3 +56,5 @@ runuser -l ec2-user -c '
   git clone https://github.com/super-octo-broccoli/py-build.git /home/ec2-user/py-build
 '
 rm -f /tmp/gh_token
+
+echo "=== Build setup complete at $(date) ==="
